@@ -43,8 +43,10 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
     payload_json = get_payload_from_redis_data(fields)
 
     case Jason.decode(payload_json) do
-      {:ok, %{"batch_id" => batch_id, "payload" => discord_payload, "targets" => targets}} ->
-        process_batch(batch_id, discord_payload, targets)
+      {:ok, %{"batch_id" => batch_id, "targets" => targets} = payload} ->
+        action = Map.get(payload, "action", "execute")
+        discord_payload = Map.get(payload, "payload", %{})
+        process_batch(action, batch_id, discord_payload, targets)
         message
 
       _ ->
@@ -65,58 +67,69 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
   defp get_payload_from_redis_data(%{"payload" => payload}), do: payload
   defp get_payload_from_redis_data(_), do: ""
 
-  defp process_batch(batch_id, discord_payload, targets) do
-    target_count = length(targets)
-    Logger.info("Starting batch #{batch_id} with #{target_count} target(s)")
-
+  defp process_batch(action, batch_id, discord_payload, targets) do
+    # Process targets with bounded concurrency and wait for completion
     results =
       Task.async_stream(
         targets,
         fn target ->
-          DiscordWorker.send_to_discord_with_retries(target, discord_payload)
+          DiscordWorker.process_target(action, target, discord_payload)
         end,
         max_concurrency: 20,
         timeout: :infinity
       )
       |> Enum.to_list()
 
-    {broadcasts, failures} =
+    {successes, failures} =
       targets
       |> Enum.zip(results)
-      |> Enum.reduce({[], []}, fn {target, result}, {bcasts, fails} ->
+      |> Enum.reduce({[], []}, fn {target, result_tuple}, {succ_acc, fail_acc} ->
+        # result_tuple from Task.async_stream is {:ok, worker_result} or {:exit, reason}
+        worker_result = case result_tuple do
+          {:ok, res} -> res
+          _ -> {:error, :task_crashed}
+        end
+
+        webhook_id = Map.get(target, "webhook_id") || "unknown"
+        # Optional bot team identifiers that might be in the target
         conn_id = Map.get(target, "connection_id")
         hub_id = Map.get(target, "hub_id")
         channel_id = Map.get(target, "channel_id")
         guild_id = Map.get(target, "guild_id")
+        
+        base_info = %{
+          "webhook_id" => webhook_id,
+          "connection_id" => conn_id,
+          "hub_id" => hub_id,
+          "channel_id" => channel_id,
+          "guild_id" => guild_id
+        }
+        # Clean up nil values so the JSON is tidy
+        base_info = :maps.filter(fn _, v -> v != nil end, base_info)
 
-        case result do
+        case worker_result do
           {:ok, msg_id} ->
-            broadcast = %{
-              "broadcast_id" => msg_id,
-              "channel_id" => channel_id,
-              "guild_id" => guild_id
-            }
-            {[broadcast | bcasts], fails}
+            # msg_id might be nil for edit/delete
+            succ_info = if msg_id, do: Map.put(base_info, "message_id", msg_id), else: base_info
+            {[succ_info | succ_acc], fail_acc}
 
-          {:error, _reason} ->
-            failure = %{
-              "connection_id" => conn_id,
-              "hub_id" => hub_id,
-              "error_type" => "permanent"
-            }
-            {bcasts, [failure | fails]}
+          {:error, reason} ->
+            fail_info = Map.put(base_info, "error", inspect(reason))
+            {succ_acc, [fail_info | fail_acc]}
         end
       end)
 
-    ok_count = length(broadcasts)
-    drop_count = length(failures)
-    Logger.info("Batch #{batch_id} done: #{ok_count} ok, #{drop_count} dropped")
+    ok_count = length(successes)
+    fail_count = length(failures)
+    Logger.info("Batch #{batch_id} done: #{ok_count} ok, #{fail_count} failed")
 
     payload = Jason.encode!(%{
       status: "success",
-      broadcasts: Enum.reverse(broadcasts),
+      action: action,
+      message_ids: Enum.reverse(successes), # We map successes to message_ids list
       failures: Enum.reverse(failures)
     })
+    
     Redix.command(:my_redix, ["PUBLISH", "callbacks:#{batch_id}", payload])
     Logger.info("Published callback for batch #{batch_id}")
   end
