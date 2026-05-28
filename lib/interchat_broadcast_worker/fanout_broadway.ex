@@ -7,15 +7,19 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
   alias InterchatBroadcastWorker.DiscordWorker
 
   def start_link(_opts) do
+    redis_opts = Application.get_env(:interchat_broadcast_worker, :redis_opts, [host: "localhost", port: 6379])
+    redis_stream = Application.get_env(:interchat_broadcast_worker, :redis_stream, "discord:fanout:stream")
+    redis_group = Application.get_env(:interchat_broadcast_worker, :redis_group, "elixir_fanout_pool")
+
     Broadway.start_link(__MODULE__,
       name: __MODULE__,
       producer: [
         module: {
           OffBroadwayRedisStream.Producer,
           [
-            redis_client_opts: [host: "localhost", port: 6379],
-            stream: "discord:fanout:stream",
-            group: "elixir_fanout_pool",
+            redis_client_opts: redis_opts,
+            stream: redis_stream,
+            group: redis_group,
             consumer_name: "interchat_worker_" <> Integer.to_string(:os.system_time(:microsecond))
           ]
         },

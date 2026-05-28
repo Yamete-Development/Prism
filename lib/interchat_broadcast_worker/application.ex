@@ -7,8 +7,10 @@ defmodule InterchatBroadcastWorker.Application do
 
   @impl true
   def start(_type, _args) do
+    redis_opts = Application.get_env(:interchat_broadcast_worker, :redis_opts, [host: "localhost", port: 6379])
+    
     children = [
-      {Redix, name: :my_redix, host: "localhost", port: 6379},
+      {Redix, Keyword.put(redis_opts, :name, :my_redix)},
       {Finch, name: DiscordFinch, pools: %{"https://discord.com" => [size: 100]}},
       {Task.Supervisor, name: InterchatBroadcastWorker.TaskSup},
       InterchatBroadcastWorker.FanoutBroadway
