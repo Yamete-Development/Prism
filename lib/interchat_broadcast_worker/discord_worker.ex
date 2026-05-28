@@ -36,39 +36,57 @@ defmodule InterchatBroadcastWorker.DiscordWorker do
     :ok
   end
 
-  defp do_http_post(url, headers, body, webhook_id, content) do
-    # 1. Send HTTP POST via Finch
+  defp do_http_post(url, headers, body, webhook_id, content, attempt \\ 1) do
     case Finch.build(:post, url, headers, body) |> Finch.request(DiscordFinch) do
       {:ok, %{status: status}} when status in 200..299 ->
-        # 2. Success!
+        Logger.debug("Webhook #{webhook_id} sent successfully")
         :ok
 
       {:ok, %{status: 429, body: resp_body}} ->
-        # 3. Rate Limited: Sleep and retry
-        # Discord returns retry_after in seconds (float). Process.sleep needs milliseconds.
         payload = Jason.decode!(resp_body)
         retry_after_ms = trunc(payload["retry_after"] * 1000)
 
-        Logger.warning("Rate limited (429) for webhook_id: #{webhook_id}. Retrying after #{retry_after_ms}ms")
+        Logger.warning(
+          "Rate limited (429) webhook_id=#{webhook_id} " <>
+          "attempt=#{attempt} retry_after=#{retry_after_ms}ms"
+        )
         Process.sleep(retry_after_ms)
-        do_http_post(url, headers, body, webhook_id, content)
+        do_http_post(url, headers, body, webhook_id, content, attempt + 1)
 
-      {:ok, %{status: status}} when status in [401, 403, 404] ->
-        # 4. Invalid Requests (Unauthorized, Forbidden, Not Found).
-        # CRITICAL: Discord bans IPs with > 10,000 invalid requests in 10 minutes.
-        # Do NOT retry. Drop the webhook and treat as 'done' so the batch can finish.
-        Logger.warning("Dropping invalid webhook request: #{status} for webhook_id #{webhook_id}")
+      {:ok, %{status: status, body: resp_body}} when status in [401, 403, 404] ->
+        Logger.warning(
+          "Dropping webhook_id=#{webhook_id} status=#{status} body=#{resp_body} " <>
+          "(invalid webhook, no retry)"
+        )
+        :ok
+
+      {:ok, %{status: 400, body: resp_body}} ->
+        Logger.error(
+          "Bad request webhook_id=#{webhook_id} body=#{resp_body} " <>
+          "(check payload field names/types)"
+        )
         :ok
 
       {:error, reason} ->
-        # 5. Network timeouts/errors. Brief backoff and retry.
-        Logger.error("Network error for webhook_id #{webhook_id}: #{inspect(reason)}. Retrying in 1s...")
-        Process.sleep(1000)
-        do_http_post(url, headers, body, webhook_id, content)
+        if attempt >= 5 do
+          Logger.error(
+            "Giving up on webhook_id=#{webhook_id} after #{attempt} attempts: " <>
+            "#{inspect(reason)}"
+          )
+          :ok
+        else
+          Logger.warning(
+            "Network error webhook_id=#{webhook_id} attempt=#{attempt}: " <>
+            "#{inspect(reason)}. Retrying in 1s..."
+          )
+          Process.sleep(1000)
+          do_http_post(url, headers, body, webhook_id, content, attempt + 1)
+        end
 
       {:ok, %{status: status}} ->
-        # Handle other unexpected HTTP statuses
-        Logger.warning("Unexpected status #{status} for webhook_id #{webhook_id}. Treating as done.")
+        Logger.warning(
+          "Unexpected status #{status} for webhook_id=#{webhook_id}. Treating as done."
+        )
         :ok
     end
   end

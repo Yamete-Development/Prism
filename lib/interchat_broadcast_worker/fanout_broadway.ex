@@ -20,7 +20,8 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
             redis_client_opts: redis_opts,
             stream: redis_stream,
             group: redis_group,
-            consumer_name: "interchat_worker_" <> Integer.to_string(:os.system_time(:microsecond))
+            consumer_name: "interchat_worker_" <> Integer.to_string(:os.system_time(:microsecond)),
+            make_stream: true
           ]
         },
         rate_limiting: [
@@ -30,19 +31,16 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
       ],
       processors: [
         default: [concurrency: 50]
-      ],
-      # We don't necessarily need a batcher unless we want to group them
-      batchers: [
-        default: [concurrency: 1, batch_size: 1]
       ]
+      # No batcher needed — each message is processed independently
     )
   end
 
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
-    # Assuming data is a list of elements from Redis stream, usually [id, key1, val1, ...]
-    # The prompt says: You will receive a JSON string in the payload field of the Redis Stream message.
-    payload_json = get_payload_from_redis_data(data)
+    # OffBroadwayRedisStream returns data as [entry_id, [field1, value1, ...]]
+    [_id, fields] = data
+    payload_json = get_payload_from_redis_data(fields)
 
     case Jason.decode(payload_json) do
       {:ok, %{"batch_id" => batch_id, "payload" => discord_payload, "targets" => targets}} ->
@@ -72,20 +70,30 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
   defp get_payload_from_redis_data(_), do: ""
 
   defp process_batch(batch_id, discord_payload, targets) do
-    # Process targets with bounded concurrency and wait for completion
-    Task.async_stream(
-      targets,
-      fn target ->
-        DiscordWorker.send_to_discord_with_retries(target, discord_payload)
-      end,
-      max_concurrency: 20,
-      timeout: :infinity
-    )
-    |> Stream.run()
+    target_count = length(targets)
+    Logger.info("Starting batch #{batch_id} with #{target_count} target(s)")
 
-    # Once all targets are processed (or dropped), notify completion
+    {ok_count, drop_count} =
+      Task.async_stream(
+        targets,
+        fn target ->
+          DiscordWorker.send_to_discord_with_retries(target, discord_payload)
+        end,
+        max_concurrency: 20,
+        timeout: :infinity
+      )
+      |> Enum.reduce({0, 0}, fn
+        {:ok, :ok}, {ok, drop} -> {ok + 1, drop}
+        _, {ok, drop} -> {ok, drop + 1}
+      end)
+
+    Logger.info(
+      "Batch #{batch_id} done: #{ok_count} ok, #{drop_count} dropped"
+    )
+
+    # Notify completion
     payload = Jason.encode!(%{status: "success"})
     Redix.command(:my_redix, ["PUBLISH", "callbacks:#{batch_id}", payload])
-    Logger.info("Batch #{batch_id} fully completed and bot notified.")
+    Logger.info("Published callback for batch #{batch_id}")
   end
 end
