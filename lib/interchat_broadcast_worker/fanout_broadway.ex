@@ -49,16 +49,12 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
 
       _ ->
         Logger.error("Failed to parse or invalid payload: #{inspect(payload_json)}")
-        # We can mark as failed or just acknowledge it as dropped
         Message.failed(message, "invalid payload")
     end
   end
 
   # Helper to extract the 'payload' field from the Redis stream data
-  # Redis stream data in Elixir usually comes as a list or map of string pairs.
   defp get_payload_from_redis_data(data) when is_list(data) do
-    # Note: off_broadway_redis_stream returns data in a specific format, typically a list of key-value pairs.
-    # We look for "payload" key
     Enum.chunk_every(data, 2)
     |> Enum.find_value(fn
       ["payload", value] -> value
@@ -73,7 +69,7 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
     target_count = length(targets)
     Logger.info("Starting batch #{batch_id} with #{target_count} target(s)")
 
-    {ok_count, drop_count} =
+    results =
       Task.async_stream(
         targets,
         fn target ->
@@ -82,17 +78,45 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
         max_concurrency: 20,
         timeout: :infinity
       )
-      |> Enum.reduce({0, 0}, fn
-        {:ok, :ok}, {ok, drop} -> {ok + 1, drop}
-        _, {ok, drop} -> {ok, drop + 1}
+      |> Enum.to_list()
+
+    {broadcasts, failures} =
+      targets
+      |> Enum.zip(results)
+      |> Enum.reduce({[], []}, fn {target, result}, {bcasts, fails} ->
+        conn_id = Map.get(target, "connection_id")
+        hub_id = Map.get(target, "hub_id")
+        channel_id = Map.get(target, "channel_id")
+        guild_id = Map.get(target, "guild_id")
+
+        case result do
+          {:ok, msg_id} ->
+            broadcast = %{
+              "broadcast_id" => msg_id,
+              "channel_id" => channel_id,
+              "guild_id" => guild_id
+            }
+            {[broadcast | bcasts], fails}
+
+          {:error, _reason} ->
+            failure = %{
+              "connection_id" => conn_id,
+              "hub_id" => hub_id,
+              "error_type" => "permanent"
+            }
+            {bcasts, [failure | fails]}
+        end
       end)
 
-    Logger.info(
-      "Batch #{batch_id} done: #{ok_count} ok, #{drop_count} dropped"
-    )
+    ok_count = length(broadcasts)
+    drop_count = length(failures)
+    Logger.info("Batch #{batch_id} done: #{ok_count} ok, #{drop_count} dropped")
 
-    # Notify completion
-    payload = Jason.encode!(%{status: "success"})
+    payload = Jason.encode!(%{
+      status: "success",
+      broadcasts: Enum.reverse(broadcasts),
+      failures: Enum.reverse(failures)
+    })
     Redix.command(:my_redix, ["PUBLISH", "callbacks:#{batch_id}", payload])
     Logger.info("Published callback for batch #{batch_id}")
   end
