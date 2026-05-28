@@ -18,7 +18,7 @@ defmodule InterchatBroadcastWorker.DiscordWorker do
 
       content = if is_binary(mention_id) and action in ["execute", "edit"] do
         current_content = Map.get(content, "content", "")
-        Map.put(content, "content", current_content <> " <@#{mention_id}>")
+        Map.put(content, "content", "<@#{mention_id}> " <> current_content)
       else
         content
       end
