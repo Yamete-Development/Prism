@@ -1,4 +1,4 @@
-# InterchatBroadcastWorker
+# Prism - A High-Performance Webhook Message Router for Discord
 
 A high-performance, asynchronous worker pool written in Elixir. This service acts as a fan-out processor for webhook requests, pulling batched messages from a Redis Stream and dispatching them concurrently to Discord APIs while handling Discord's rate limits and connection backpressure automatically.
 

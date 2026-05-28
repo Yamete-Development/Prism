@@ -1,4 +1,4 @@
-defmodule InterchatBroadcastWorker.DiscordWorker do
+defmodule BroadcastWorker.DiscordWorker do
   require Logger
 
   @doc """

@@ -1,15 +1,15 @@
-defmodule InterchatBroadcastWorker.FanoutBroadway do
+defmodule BroadcastWorker.FanoutBroadway do
   use Broadway
 
   require Logger
 
   alias Broadway.Message
-  alias InterchatBroadcastWorker.DiscordWorker
+  alias BroadcastWorker.DiscordWorker
 
   def start_link(_opts) do
-    redis_opts = Application.get_env(:interchat_broadcast_worker, :redis_opts, [host: "localhost", port: 6379])
-    redis_stream = Application.get_env(:interchat_broadcast_worker, :redis_stream, "discord:fanout:stream")
-    redis_group = Application.get_env(:interchat_broadcast_worker, :redis_group, "elixir_fanout_pool")
+    redis_opts = Application.get_env(:broadcast_worker, :redis_opts, [host: "localhost", port: 6379])
+    redis_stream = Application.get_env(:broadcast_worker, :redis_stream, "discord:fanout:stream")
+    redis_group = Application.get_env(:broadcast_worker, :redis_group, "elixir_fanout_pool")
 
     Broadway.start_link(__MODULE__,
       name: __MODULE__,
@@ -20,7 +20,7 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
             redis_client_opts: redis_opts,
             stream: redis_stream,
             group: redis_group,
-            consumer_name: "interchat_worker_" <> Integer.to_string(:os.system_time(:microsecond)),
+            consumer_name: "broadcast_worker_" <> Integer.to_string(:os.system_time(:microsecond)),
             make_stream: true
           ]
         },
@@ -32,7 +32,7 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
       processors: [
         default: [concurrency: 50]
       ]
-      # No batcher needed — each message is processed independently
+      # No batcher needed, each message is processed independently
     )
   end
 
@@ -96,7 +96,7 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
         hub_id = Map.get(target, "hub_id")
         channel_id = Map.get(target, "channel_id")
         guild_id = Map.get(target, "guild_id")
-        
+
         base_info = %{
           "webhook_id" => webhook_id,
           "connection_id" => conn_id,
@@ -129,7 +129,7 @@ defmodule InterchatBroadcastWorker.FanoutBroadway do
       message_ids: Enum.reverse(successes), # We map successes to message_ids list
       failures: Enum.reverse(failures)
     })
-    
+
     Redix.command(:my_redix, ["PUBLISH", "callbacks:#{batch_id}", payload])
     Logger.info("Published callback for batch #{batch_id}")
   end

@@ -1,9 +1,9 @@
-defmodule InterchatBroadcastWorker.MixProject do
+defmodule BroadcastWorker.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :interchat_broadcast_worker,
+      app: :broadcast_worker,
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
@@ -15,7 +15,7 @@ defmodule InterchatBroadcastWorker.MixProject do
   def application do
     [
       extra_applications: [:logger],
-      mod: {InterchatBroadcastWorker.Application, []}
+      mod: {BroadcastWorker.Application, []}
     ]
   end
 

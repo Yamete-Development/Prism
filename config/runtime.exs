@@ -15,7 +15,7 @@ else
   redis_opts
 end
 
-config :interchat_broadcast_worker,
+config :broadcast_worker,
   redis_opts: redis_opts,
   redis_stream: System.get_env("REDIS_STREAM") || "discord:fanout:stream",
   redis_group: System.get_env("REDIS_GROUP") || "elixir_fanout_pool"
