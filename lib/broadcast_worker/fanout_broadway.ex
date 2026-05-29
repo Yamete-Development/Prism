@@ -30,7 +30,8 @@ defmodule BroadcastWorker.FanoutBroadway do
             stream: stream_key,
             group: redis_group,
             consumer_name: "broadcast_worker_#{lane}_" <> Integer.to_string(:os.system_time(:microsecond)),
-            make_stream: true
+            make_stream: true,
+            receive_interval: 50
           ]
         },
         rate_limiting: [
@@ -47,15 +48,26 @@ defmodule BroadcastWorker.FanoutBroadway do
 
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
+    polled_at = System.monotonic_time(:millisecond)
     # OffBroadwayRedisStream returns data as [entry_id, [field1, value1, ...]]
-    [_id, fields] = data
+    [id, fields] = data
+
+    enqueued_at = case String.split(id, "-") do
+      [timestamp_str, _] ->
+        case Integer.parse(timestamp_str) do
+          {ts, ""} -> ts
+          _ -> :os.system_time(:millisecond)
+        end
+      _ -> :os.system_time(:millisecond)
+    end
+
     payload_json = get_payload_from_redis_data(fields)
 
     case Jason.decode(payload_json) do
       {:ok, %{"batch_id" => batch_id, "targets" => targets} = payload} ->
         action = Map.get(payload, "action", "execute")
         discord_payload = Map.get(payload, "payload", %{})
-        process_batch(action, batch_id, discord_payload, targets)
+        process_batch(action, batch_id, discord_payload, targets, polled_at, enqueued_at)
         message
 
       _ ->
@@ -76,13 +88,13 @@ defmodule BroadcastWorker.FanoutBroadway do
   defp get_payload_from_redis_data(%{"payload" => payload}), do: payload
   defp get_payload_from_redis_data(_), do: ""
 
-  defp process_batch(action, batch_id, discord_payload, targets) do
+  defp process_batch(action, batch_id, discord_payload, targets, polled_at, enqueued_at) do
     # Process targets with bounded concurrency and wait for completion
     results =
       Task.async_stream(
         targets,
         fn target ->
-          DiscordWorker.process_target(action, target, discord_payload, batch_id)
+          DiscordWorker.process_target(action, target, discord_payload, batch_id, polled_at, enqueued_at)
         end,
         max_concurrency: 20,
         timeout: :infinity
@@ -123,20 +135,23 @@ defmodule BroadcastWorker.FanoutBroadway do
             {[succ_info | succ_acc], fail_acc}
 
           {:error, reason} ->
-            {error_string, error_type} = case reason do
-              :invalid_webhook -> {"invalid_webhook", "permanent"}
-              :bad_request -> {"bad_request", "permanent"}
-              :missing_webhook -> {"missing_webhook", "permanent"}
-              :invalid_action -> {"invalid_action", "permanent"}
-              {:server_error, _} -> {"server_error", "transient"}
-              :network_error -> {"network_error", "transient"}
-              :task_crashed -> {"task_crashed", "transient"}
-              _ -> {inspect(reason), "transient"}
+            {error_string, error_type, extra} = case reason do
+              {:rate_limited, retry_after_ms} -> {"rate_limited", "transient", %{"retry_after_ms" => retry_after_ms}}
+              :invalid_webhook -> {"invalid_webhook", "permanent", %{}}
+              :message_not_found -> {"message_not_found", "transient", %{}}
+              :bad_request -> {"bad_request", "permanent", %{}}
+              :missing_webhook -> {"missing_webhook", "permanent", %{}}
+              :invalid_action -> {"invalid_action", "permanent", %{}}
+              {:server_error, _} -> {"server_error", "transient", %{}}
+              :network_error -> {"network_error", "transient", %{}}
+              :task_crashed -> {"task_crashed", "transient", %{}}
+              _ -> {inspect(reason), "transient", %{}}
             end
             
             fail_info = base_info
               |> Map.put("error", error_string)
               |> Map.put("error_type", error_type)
+              |> Map.merge(extra)
             
             {succ_acc, [fail_info | fail_acc]}
         end

@@ -5,9 +5,9 @@ defmodule BroadcastWorker.DiscordWorker do
   Sends the webhook content to a guild's discord webhook URL with retry logic.
   Returns `{:ok, message_id}` on success or `{:error, reason}` on failure.
   """
-  def process_target(action, target, content \\ %{}, batch_id \\ nil)
+  def process_target(action, target, content \\ %{}, batch_id \\ nil, polled_at \\ nil, enqueued_at \\ nil)
 
-  def process_target(action, %{"webhook_id" => webhook_id, "webhook_token" => webhook_token} = target, content, batch_id) do
+  def process_target(action, %{"webhook_id" => webhook_id, "webhook_token" => webhook_token} = target, content, batch_id, polled_at, enqueued_at) do
     if is_binary(webhook_id) and is_binary(webhook_token) do
       base_url = "https://discord.com/api/webhooks/#{webhook_id}/#{webhook_token}"
       thread_id = Map.get(target, "thread_id")
@@ -15,10 +15,23 @@ defmodule BroadcastWorker.DiscordWorker do
 
       mutations = Map.get(target, "mutations") || %{}
       mention_id = Map.get(mutations, "reply_mention_id")
+      reply_component = Map.get(mutations, "reply_component")
 
-      content = if is_binary(mention_id) and action in ["execute", "edit"] do
+      content = if is_map(content) and action in ["execute", "edit"] do
+        {badge_header, content} = Map.pop(content, "badge_header", "")
+
         current_content = Map.get(content, "content", "")
-        Map.put(content, "content", "<@#{mention_id}> " <> current_content)
+        mention_str = if is_binary(mention_id), do: "<@#{mention_id}> ", else: ""
+        content = Map.put(content, "content", badge_header <> mention_str <> current_content)
+
+        content = if is_list(reply_component) do
+          current_components = Map.get(content, "components") || []
+          Map.put(content, "components", current_components ++ reply_component)
+        else
+          content
+        end
+
+        content
       else
         content
       end
@@ -44,7 +57,19 @@ defmodule BroadcastWorker.DiscordWorker do
       else
         case build_request(action, base_url, message_id, thread_id) do
           {:ok, method, url} ->
-            result = do_http_request(method, url, headers, body, webhook_id)
+            req_start = System.monotonic_time(:millisecond)
+            result = do_http_request(method, url, headers, body, webhook_id, message_id)
+            req_end = System.monotonic_time(:millisecond)
+
+            if Code.ensure_loaded?(Mix) and Mix.env() == :dev do
+              now_wall = :os.system_time(:millisecond)
+              time_since_enqueued = if enqueued_at, do: now_wall - enqueued_at, else: 0
+              time_since_polled = if polled_at, do: req_end - polled_at, else: 0
+              http_time = req_end - req_start
+              Logger.info("[Timing] Webhook #{webhook_id} (batch #{batch_id || "N/A"}) - Total since enqueued: #{time_since_enqueued}ms | Since polled: #{time_since_polled}ms | HTTP request: #{http_time}ms")
+            end
+
+            # Cache success
             if batch_id do
               case result do
                 {:ok, msg_id} when is_binary(msg_id) ->
@@ -54,7 +79,29 @@ defmodule BroadcastWorker.DiscordWorker do
                 _ -> :ok
               end
             end
-            result
+
+            # Handle retries if needed
+            case result do
+              {:error, {:rate_limited, delay_ms}} ->
+                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, delay_ms, 1)
+                {:ok, nil} # Unblock batch
+
+              {:error, {:server_error, _}} ->
+                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, 2000, 1)
+                {:ok, nil}
+
+              {:error, :message_not_found} ->
+                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, 1000, 1)
+                {:ok, nil}
+
+              {:error, :network_error} ->
+                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, 1000, 1)
+                {:ok, nil}
+
+              other ->
+                other
+            end
+
           {:error, reason} ->
             {:error, reason}
         end
@@ -65,20 +112,125 @@ defmodule BroadcastWorker.DiscordWorker do
     end
   end
 
-  def process_target(_action, target, _content, _batch_id) do
+  def process_target(_action, target, _content, _batch_id, _polled_at, _enqueued_at) do
     Logger.warning("Missing webhook data in target: #{inspect(target)}. Skipping.")
     {:error, :missing_webhook}
   end
 
+  defp spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, delay_ms, attempt) do
+    # Fetch parent_message_id from meta before it gets deleted
+    parent_msg_id = if batch_id and action == "execute" do
+      case Redix.command(:my_redix, ["GET", "prism:batch:#{batch_id}"]) do
+        {:ok, meta_json} when is_binary(meta_json) ->
+          case Jason.decode(meta_json) do
+            {:ok, %{"message_id" => mid}} -> mid
+            _ -> nil
+          end
+        _ -> nil
+      end
+    else
+      nil
+    end
+
+    Task.Supervisor.start_child(BroadcastWorker.TaskSup, fn ->
+      Process.sleep(delay_ms)
+      retry_loop(action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt)
+    end)
+  end
+
+  defp retry_loop(action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt) do
+    result = do_http_request(method, url, headers, body, webhook_id, message_id)
+
+    case result do
+      {:error, {:rate_limited, delay_ms}} ->
+        Process.sleep(delay_ms)
+        retry_loop(action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt + 1)
+
+      {:error, {:server_error, _}} ->
+        if attempt >= 3 do
+          publish_partial(action, target, batch_id, parent_msg_id, nil, :server_error)
+        else
+          Process.sleep(2000)
+          retry_loop(action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt + 1)
+        end
+
+      {:error, :message_not_found} ->
+        if attempt >= 3 do
+          publish_partial(action, target, batch_id, parent_msg_id, nil, :message_not_found)
+        else
+          Process.sleep(1000)
+          retry_loop(action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt + 1)
+        end
+
+      {:error, :network_error} ->
+        if attempt >= 5 do
+          publish_partial(action, target, batch_id, parent_msg_id, nil, :network_error)
+        else
+          Process.sleep(1000)
+          retry_loop(action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt + 1)
+        end
+
+      {:error, permanent_reason} ->
+        publish_partial(action, target, batch_id, parent_msg_id, nil, permanent_reason)
+
+      {:ok, msg_id} ->
+        publish_partial(action, target, batch_id, parent_msg_id, msg_id, nil)
+    end
+  end
+
+  defp publish_partial(action, target, batch_id, parent_msg_id, success_msg_id, error_reason) do
+    if not is_nil(batch_id) do
+      base_info = %{
+        "webhook_id" => target["webhook_id"],
+        "channel_id" => target["channel_id"],
+        "guild_id" => target["guild_id"],
+        "connection_id" => target["connection_id"],
+        "hub_id" => target["hub_id"]
+      } |> :maps.filter(fn _, v -> v != nil end)
+
+      {successes, failures} = if error_reason do
+        {error_string, error_type} = case error_reason do
+          :invalid_webhook -> {"invalid_webhook", "permanent"}
+          :message_not_found -> {"message_not_found", "transient"}
+          :bad_request -> {"bad_request", "permanent"}
+          :missing_webhook -> {"missing_webhook", "permanent"}
+          :invalid_action -> {"invalid_action", "permanent"}
+          {:server_error, _} -> {"server_error", "transient"}
+          :network_error -> {"network_error", "transient"}
+          _ -> {inspect(error_reason), "transient"}
+        end
+        {[], [Map.merge(base_info, %{"error" => error_string, "error_type" => error_type})]}
+      else
+        succ_info = if success_msg_id, do: Map.put(base_info, "message_id", success_msg_id), else: base_info
+        {[succ_info], []}
+      end
+
+      payload = %{
+        "batch_id" => batch_id,
+        "status" => "partial_retry",
+        "action" => action,
+        "message_ids" => successes,
+        "failures" => failures
+      }
+      payload = if parent_msg_id, do: Map.put(payload, "parent_message_id", parent_msg_id), else: payload
+
+      json = Jason.encode!(payload)
+      callback_stream = Application.get_env(:broadcast_worker, :redis_callback_stream, "discord:fanout:callbacks")
+      Redix.command(:my_redix, ["XADD", callback_stream, "*", "payload", json])
+    end
+  end
+
+
+
   defp build_request("execute", base_url, _msg_id, thread_id) do
-    url = base_url <> "?wait=true"
+    url = base_url <> "?wait=true&with_components=true"
     url = if is_binary(thread_id), do: url <> "&thread_id=#{thread_id}", else: url
     {:ok, :post, url}
   end
 
   defp build_request("edit", base_url, msg_id, thread_id) when is_binary(msg_id) do
-    url = base_url <> "/messages/#{msg_id}"
-    url = if is_binary(thread_id), do: url <> "?thread_id=#{thread_id}", else: url
+    url = base_url <> "/messages/#{msg_id}?with_components=true"
+    url = if is_binary(thread_id), do: url <> "&thread_id=#{thread_id}", else: url
     {:ok, :patch, url}
   end
 
@@ -93,26 +245,17 @@ defmodule BroadcastWorker.DiscordWorker do
     {:error, :invalid_action}
   end
 
-  defp do_http_request(method, url, headers, body, webhook_id, attempt \\ 1) do
+  defp do_http_request(method, url, headers, body, webhook_id, _message_id) do
     case Finch.build(method, url, headers, body) |> Finch.request(DiscordFinch) do
       {:ok, %{status: status, body: resp_body}} when status in 200..299 ->
         if method == :post do
           case Jason.decode(resp_body) do
-            {:ok, %{"id" => msg_id}} ->
-              {:ok, msg_id}
-
+            {:ok, %{"id" => msg_id}} -> {:ok, msg_id}
             {:ok, parsed} ->
-              Logger.warning(
-                "Webhook #{webhook_id} returned #{status} but no 'id' in body: " <>
-                "#{inspect(parsed)}"
-              )
+              Logger.warning("Webhook #{webhook_id} returned #{status} but no 'id' in body: #{inspect(parsed)}")
               {:ok, nil}
-
             {:error, decode_err} ->
-              Logger.warning(
-                "Webhook #{webhook_id} returned #{status} but body is not valid JSON: " <>
-                "#{inspect(decode_err)} body=#{inspect(resp_body)}"
-              )
+              Logger.warning("Webhook #{webhook_id} returned #{status} but body is not valid JSON: #{inspect(decode_err)}")
               {:ok, nil}
           end
         else
@@ -122,58 +265,34 @@ defmodule BroadcastWorker.DiscordWorker do
       {:ok, %{status: 429, body: resp_body}} ->
         payload = Jason.decode!(resp_body)
         retry_after_ms = trunc(payload["retry_after"] * 1000)
-
-        Logger.warning(
-          "Rate limited (429) webhook_id=#{webhook_id} " <>
-          "attempt=#{attempt} retry_after=#{retry_after_ms}ms"
-        )
-        Process.sleep(retry_after_ms)
-        do_http_request(method, url, headers, body, webhook_id, attempt + 1)
+        {:error, {:rate_limited, retry_after_ms}}
 
       {:ok, %{status: status, body: resp_body}} when status in [401, 403, 404] ->
-        Logger.warning(
-          "Dropping webhook_id=#{webhook_id} status=#{status} body=#{resp_body} " <>
-          "(invalid webhook, no retry)"
-        )
-        {:error, :invalid_webhook}
+        is_unknown_message =
+          case Jason.decode(resp_body) do
+            {:ok, %{"code" => 10008}} -> true
+            _ -> false
+          end
+
+        if is_unknown_message do
+          {:error, :message_not_found}
+        else
+          Logger.warning("Dropping webhook_id=#{webhook_id} status=#{status} body=#{resp_body} (invalid webhook)")
+          {:error, :invalid_webhook}
+        end
 
       {:ok, %{status: 400, body: resp_body}} ->
-        Logger.error(
-          "Bad request webhook_id=#{webhook_id} body=#{resp_body} " <>
-          "(check payload field names/types)"
-        )
+        Logger.error("Bad request webhook_id=#{webhook_id} body=#{resp_body}")
         {:error, :bad_request}
 
-      {:ok, %{status: status, body: resp_body}} when status in 500..599 ->
-        if attempt >= 3 do
-          Logger.error("Discord 5xx error webhook_id=#{webhook_id} status=#{status} body=#{resp_body}. Giving up.")
-          {:error, {:server_error, status}}
-        else
-          Logger.warning("Discord 5xx error webhook_id=#{webhook_id} status=#{status} attempt=#{attempt}. Retrying in 2s...")
-          Process.sleep(2000)
-          do_http_request(method, url, headers, body, webhook_id, attempt + 1)
-        end
+      {:ok, %{status: status}} when status in 500..599 ->
+        {:error, {:server_error, status}}
 
-      {:error, reason} ->
-        if attempt >= 5 do
-          Logger.error(
-            "Giving up on webhook_id=#{webhook_id} after #{attempt} attempts: " <>
-            "#{inspect(reason)}"
-          )
-          {:error, :network_error}
-        else
-          Logger.warning(
-            "Network error webhook_id=#{webhook_id} attempt=#{attempt}: " <>
-            "#{inspect(reason)}. Retrying in 1s..."
-          )
-          Process.sleep(1000)
-          do_http_request(method, url, headers, body, webhook_id, attempt + 1)
-        end
+      {:error, _reason} ->
+        {:error, :network_error}
 
       {:ok, %{status: status}} ->
-        Logger.warning(
-          "Unexpected status #{status} for webhook_id=#{webhook_id}. Treating as done."
-        )
+        Logger.warning("Unexpected status #{status} for webhook_id=#{webhook_id}. Treating as done.")
         {:ok, nil}
     end
   end
