@@ -1,9 +1,9 @@
-defmodule BroadcastWorker.MixProject do
+defmodule Prism.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :broadcast_worker,
+      app: :prism,
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
@@ -15,7 +15,7 @@ defmodule BroadcastWorker.MixProject do
   def application do
     [
       extra_applications: [:logger],
-      mod: {BroadcastWorker.Application, []}
+      mod: {Prism.Application, []}
     ]
   end
 

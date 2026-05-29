@@ -1,26 +1,25 @@
-defmodule BroadcastWorker.FanoutBroadway do
+defmodule Prism.FanoutBroadway do
   use Broadway
 
   require Logger
 
   alias Broadway.Message
-  alias BroadcastWorker.DiscordWorker
 
   def start_link(opts) do
     lane = Keyword.fetch!(opts, :lane)
     name = Keyword.get(opts, :name, __MODULE__)
     
-    redis_opts = Application.get_env(:broadcast_worker, :redis_opts, [host: "localhost", port: 6379])
+    redis_opts = Application.get_env(:prism, :redis_opts, [host: "localhost", port: 6379])
     
     stream_key = if lane == :fast do
-      Application.get_env(:broadcast_worker, :redis_stream_fast, "discord:fanout:stream:fast")
+      Application.get_env(:prism, :redis_stream_fast, "discord:fanout:stream:fast")
     else
-      Application.get_env(:broadcast_worker, :redis_stream_slow, "discord:fanout:stream:slow")
+      Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow")
     end
     
-    redis_group = Application.get_env(:broadcast_worker, :redis_group, "elixir_fanout_pool")
+    redis_group = Application.get_env(:prism, :redis_group, "elixir_fanout_pool")
 
-    max_batches_per_sec = Application.get_env(:broadcast_worker, :max_batches_per_sec, 1)
+    max_batches_per_sec = Application.get_env(:prism, :max_batches_per_sec, 1)
 
     Broadway.start_link(__MODULE__,
       name: name,
@@ -97,7 +96,7 @@ defmodule BroadcastWorker.FanoutBroadway do
       Task.async_stream(
         targets,
         fn target ->
-          DiscordWorker.process_target(action, target, discord_payload, batch_id, polled_at, enqueued_at, parent_message_id)
+          Prism.DiscordWorker.process_target(action, target, discord_payload, batch_id, polled_at, enqueued_at, parent_message_id)
         end,
         max_concurrency: 20,
         timeout: 15_000
@@ -171,7 +170,7 @@ defmodule BroadcastWorker.FanoutBroadway do
       message_ids: Enum.reverse(successes), # We map successes to message_ids list
       failures: Enum.reverse(failures)
     })
-    callback_stream = Application.get_env(:broadcast_worker, :redis_callback_stream, "discord:fanout:callbacks")
+    callback_stream = Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
     idx = :erlang.phash2(System.unique_integer(), 5)
     Redix.command(:"my_redix_#{idx}", ["XADD", callback_stream, "*", "payload", payload])
     Logger.info("Published callback to #{callback_stream} for batch #{batch_id}")

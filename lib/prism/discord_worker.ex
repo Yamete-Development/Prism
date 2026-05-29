@@ -1,4 +1,4 @@
-defmodule BroadcastWorker.DiscordWorker do
+defmodule Prism.DiscordWorker do
   require Logger
 
   @doc """
@@ -127,7 +127,7 @@ defmodule BroadcastWorker.DiscordWorker do
   end
 
   defp spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, delay_ms, attempt, parent_msg_id) do
-    Task.Supervisor.start_child(BroadcastWorker.TaskSup, fn ->
+    Task.Supervisor.start_child(Prism.TaskSup, fn ->
       Process.sleep(delay_ms)
       retry_loop(action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt)
     end)
