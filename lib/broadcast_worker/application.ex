@@ -13,8 +13,8 @@ defmodule BroadcastWorker.Application do
       {Redix, Keyword.put(redis_opts, :name, :my_redix)},
       {Finch, name: DiscordFinch, pools: %{"https://discord.com" => [size: 100]}},
       {Task.Supervisor, name: BroadcastWorker.TaskSup},
-      {BroadcastWorker.FanoutBroadway, [name: BroadcastWorker.FanoutBroadway.Fast, lane: :fast]},
-      {BroadcastWorker.FanoutBroadway, [name: BroadcastWorker.FanoutBroadway.Slow, lane: :slow]}
+      Supervisor.child_spec({BroadcastWorker.FanoutBroadway, [name: BroadcastWorker.FanoutBroadway.Fast, lane: :fast]}, id: :fanout_broadway_fast),
+      Supervisor.child_spec({BroadcastWorker.FanoutBroadway, [name: BroadcastWorker.FanoutBroadway.Slow, lane: :slow]}, id: :fanout_broadway_slow)
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
