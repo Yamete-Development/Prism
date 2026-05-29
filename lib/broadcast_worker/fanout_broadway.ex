@@ -20,6 +20,8 @@ defmodule BroadcastWorker.FanoutBroadway do
     
     redis_group = Application.get_env(:broadcast_worker, :redis_group, "elixir_fanout_pool")
 
+    max_batches_per_sec = Application.get_env(:broadcast_worker, :max_batches_per_sec, 1)
+
     Broadway.start_link(__MODULE__,
       name: name,
       producer: [
@@ -35,7 +37,7 @@ defmodule BroadcastWorker.FanoutBroadway do
           ]
         },
         rate_limiting: [
-          allowed_messages: 50,
+          allowed_messages: max_batches_per_sec,
           interval: 1000
         ]
       ],
@@ -67,7 +69,8 @@ defmodule BroadcastWorker.FanoutBroadway do
       {:ok, %{"batch_id" => batch_id, "targets" => targets} = payload} ->
         action = Map.get(payload, "action", "execute")
         discord_payload = Map.get(payload, "payload", %{})
-        process_batch(action, batch_id, discord_payload, targets, polled_at, enqueued_at)
+        parent_message_id = Map.get(payload, "message_id")
+        process_batch(action, batch_id, discord_payload, targets, polled_at, enqueued_at, parent_message_id)
         message
 
       _ ->
@@ -88,16 +91,16 @@ defmodule BroadcastWorker.FanoutBroadway do
   defp get_payload_from_redis_data(%{"payload" => payload}), do: payload
   defp get_payload_from_redis_data(_), do: ""
 
-  defp process_batch(action, batch_id, discord_payload, targets, polled_at, enqueued_at) do
+  defp process_batch(action, batch_id, discord_payload, targets, polled_at, enqueued_at, parent_message_id) do
     # Process targets with bounded concurrency and wait for completion
     results =
       Task.async_stream(
         targets,
         fn target ->
-          DiscordWorker.process_target(action, target, discord_payload, batch_id, polled_at, enqueued_at)
+          DiscordWorker.process_target(action, target, discord_payload, batch_id, polled_at, enqueued_at, parent_message_id)
         end,
         max_concurrency: 20,
-        timeout: :infinity
+        timeout: 15_000
       )
       |> Enum.to_list()
 
@@ -169,7 +172,8 @@ defmodule BroadcastWorker.FanoutBroadway do
       failures: Enum.reverse(failures)
     })
     callback_stream = Application.get_env(:broadcast_worker, :redis_callback_stream, "discord:fanout:callbacks")
-    Redix.command(:my_redix, ["XADD", callback_stream, "*", "payload", payload])
+    idx = :erlang.phash2(System.unique_integer(), 5)
+    Redix.command(:"my_redix_#{idx}", ["XADD", callback_stream, "*", "payload", payload])
     Logger.info("Published callback to #{callback_stream} for batch #{batch_id}")
   end
 end

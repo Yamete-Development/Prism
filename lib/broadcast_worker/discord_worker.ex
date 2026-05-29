@@ -5,9 +5,9 @@ defmodule BroadcastWorker.DiscordWorker do
   Sends the webhook content to a guild's discord webhook URL with retry logic.
   Returns `{:ok, message_id}` on success or `{:error, reason}` on failure.
   """
-  def process_target(action, target, content \\ %{}, batch_id \\ nil, polled_at \\ nil, enqueued_at \\ nil)
+  def process_target(action, target, content \\ %{}, batch_id \\ nil, polled_at \\ nil, enqueued_at \\ nil, parent_message_id \\ nil)
 
-  def process_target(action, %{"webhook_id" => webhook_id, "webhook_token" => webhook_token} = target, content, batch_id, polled_at, enqueued_at) do
+  def process_target(action, %{"webhook_id" => webhook_id, "webhook_token" => webhook_token} = target, content, batch_id, polled_at, enqueued_at, parent_message_id) do
     if is_binary(webhook_id) and is_binary(webhook_token) do
       base_url = "https://discord.com/api/webhooks/#{webhook_id}/#{webhook_token}"
       thread_id = Map.get(target, "thread_id")
@@ -37,13 +37,12 @@ defmodule BroadcastWorker.DiscordWorker do
       end
 
       headers = [{"Content-Type", "application/json"}]
-      body = if action == "delete", do: "", else: Jason.encode!(content)
+      body = if action == "delete", do: "", else: Jason.encode_to_iodata!(content)
 
-      target_hash = :erlang.phash2(target)
-      checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}:#{target_hash}"
+      checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
 
       cached_result = if batch_id do
-        case Redix.command(:my_redix, ["GET", checkpoint_key]) do
+        case redix_command(["GET", checkpoint_key]) do
           {:ok, "done"} -> {:ok, nil}
           {:ok, cached_msg_id} when is_binary(cached_msg_id) -> {:ok, cached_msg_id}
           _ -> nil
@@ -73,29 +72,32 @@ defmodule BroadcastWorker.DiscordWorker do
             if batch_id do
               case result do
                 {:ok, msg_id} when is_binary(msg_id) ->
-                  Redix.command(:my_redix, ["SETEX", checkpoint_key, "86400", msg_id])
+                  redix_command(["SETEX", checkpoint_key, "86400", msg_id])
                 {:ok, nil} ->
-                  Redix.command(:my_redix, ["SETEX", checkpoint_key, "86400", "done"])
+                  redix_command(["SETEX", checkpoint_key, "86400", "done"])
                 _ -> :ok
               end
             end
 
             # Handle retries if needed
+            # The parent_message_id is now passed down from Broadway in 'message_id' param if it's the execute action
+            parent_msg_id = if action == "execute", do: parent_message_id, else: nil
+
             case result do
               {:error, {:rate_limited, delay_ms}} ->
-                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, delay_ms, 1)
+                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, delay_ms, 1, parent_msg_id)
                 {:ok, nil} # Unblock batch
 
               {:error, {:server_error, _}} ->
-                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, 2000, 1)
+                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, 2000, 1, parent_msg_id)
                 {:ok, nil}
 
               {:error, :message_not_found} ->
-                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, 1000, 1)
+                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, 1000, 1, parent_msg_id)
                 {:ok, nil}
 
               {:error, :network_error} ->
-                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, 1000, 1)
+                spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, 1000, 1, parent_msg_id)
                 {:ok, nil}
 
               other ->
@@ -112,26 +114,17 @@ defmodule BroadcastWorker.DiscordWorker do
     end
   end
 
-  def process_target(_action, target, _content, _batch_id, _polled_at, _enqueued_at) do
+  def process_target(_action, target, _content, _batch_id, _polled_at, _enqueued_at, _parent_message_id) do
     Logger.warning("Missing webhook data in target: #{inspect(target)}. Skipping.")
     {:error, :missing_webhook}
   end
 
-  defp spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, delay_ms, attempt) do
-    # Fetch parent_message_id from meta before it gets deleted
-    parent_msg_id = if batch_id and action == "execute" do
-      case Redix.command(:my_redix, ["GET", "prism:batch:#{batch_id}"]) do
-        {:ok, meta_json} when is_binary(meta_json) ->
-          case Jason.decode(meta_json) do
-            {:ok, %{"message_id" => mid}} -> mid
-            _ -> nil
-          end
-        _ -> nil
-      end
-    else
-      nil
-    end
+  defp redix_command(command) do
+    idx = :erlang.phash2(System.unique_integer(), 5)
+    Redix.command(:"my_redix_#{idx}", command)
+  end
 
+  defp spawn_retry(action, target, method, url, headers, body, webhook_id, message_id, batch_id, delay_ms, attempt, parent_msg_id) do
     Task.Supervisor.start_child(BroadcastWorker.TaskSup, fn ->
       Process.sleep(delay_ms)
       retry_loop(action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt)
@@ -216,7 +209,7 @@ defmodule BroadcastWorker.DiscordWorker do
 
       json = Jason.encode!(payload)
       callback_stream = Application.get_env(:broadcast_worker, :redis_callback_stream, "discord:fanout:callbacks")
-      Redix.command(:my_redix, ["XADD", callback_stream, "*", "payload", json])
+      redix_command(["XADD", callback_stream, "*", "payload", json])
     end
   end
 
