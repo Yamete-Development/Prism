@@ -5,9 +5,9 @@ defmodule BroadcastWorker.DiscordWorker do
   Sends the webhook content to a guild's discord webhook URL with retry logic.
   Returns `{:ok, message_id}` on success or `{:error, reason}` on failure.
   """
-  def process_target(action, target, content \\ %{})
+  def process_target(action, target, content \\ %{}, batch_id \\ nil)
 
-  def process_target(action, %{"webhook_id" => webhook_id, "webhook_token" => webhook_token} = target, content) do
+  def process_target(action, %{"webhook_id" => webhook_id, "webhook_token" => webhook_token} = target, content, batch_id) do
     if is_binary(webhook_id) and is_binary(webhook_token) do
       base_url = "https://discord.com/api/webhooks/#{webhook_id}/#{webhook_token}"
       thread_id = Map.get(target, "thread_id")
@@ -26,11 +26,37 @@ defmodule BroadcastWorker.DiscordWorker do
       headers = [{"Content-Type", "application/json"}]
       body = if action == "delete", do: "", else: Jason.encode!(content)
 
-      case build_request(action, base_url, message_id, thread_id) do
-        {:ok, method, url} ->
-          do_http_request(method, url, headers, body, webhook_id)
-        {:error, reason} ->
-          {:error, reason}
+      checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
+
+      cached_result = if batch_id do
+        case Redix.command(:my_redix, ["GET", checkpoint_key]) do
+          {:ok, "done"} -> {:ok, nil}
+          {:ok, cached_msg_id} when is_binary(cached_msg_id) -> {:ok, cached_msg_id}
+          _ -> nil
+        end
+      else
+        nil
+      end
+
+      if cached_result do
+        cached_result
+      else
+        case build_request(action, base_url, message_id, thread_id) do
+          {:ok, method, url} ->
+            result = do_http_request(method, url, headers, body, webhook_id)
+            if batch_id do
+              case result do
+                {:ok, msg_id} when is_binary(msg_id) ->
+                  Redix.command(:my_redix, ["SETEX", checkpoint_key, "86400", msg_id])
+                {:ok, nil} ->
+                  Redix.command(:my_redix, ["SETEX", checkpoint_key, "86400", "done"])
+                _ -> :ok
+              end
+            end
+            result
+          {:error, reason} ->
+            {:error, reason}
+        end
       end
     else
       Logger.warning("Invalid webhook data. Skipping.")
@@ -38,7 +64,7 @@ defmodule BroadcastWorker.DiscordWorker do
     end
   end
 
-  def process_target(_action, target, _content) do
+  def process_target(_action, target, _content, _batch_id) do
     Logger.warning("Missing webhook data in target: #{inspect(target)}. Skipping.")
     {:error, :missing_webhook}
   end
@@ -116,6 +142,16 @@ defmodule BroadcastWorker.DiscordWorker do
           "(check payload field names/types)"
         )
         {:error, :bad_request}
+
+      {:ok, %{status: status, body: resp_body}} when status in 500..599 ->
+        if attempt >= 3 do
+          Logger.error("Discord 5xx error webhook_id=#{webhook_id} status=#{status} body=#{resp_body}. Giving up.")
+          {:error, {:server_error, status}}
+        else
+          Logger.warning("Discord 5xx error webhook_id=#{webhook_id} status=#{status} attempt=#{attempt}. Retrying in 2s...")
+          Process.sleep(2000)
+          do_http_request(method, url, headers, body, webhook_id, attempt + 1)
+        end
 
       {:error, reason} ->
         if attempt >= 5 do

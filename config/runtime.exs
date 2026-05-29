@@ -17,5 +17,7 @@ end
 
 config :broadcast_worker,
   redis_opts: redis_opts,
-  redis_stream: System.get_env("REDIS_STREAM") || "discord:fanout:stream",
+  redis_stream_fast: System.get_env("REDIS_STREAM_FAST") || "discord:fanout:stream:fast",
+  redis_stream_slow: System.get_env("REDIS_STREAM_SLOW") || "discord:fanout:stream:slow",
+  redis_callback_stream: System.get_env("REDIS_CALLBACK_STREAM") || "discord:fanout:callbacks",
   redis_group: System.get_env("REDIS_GROUP") || "elixir_fanout_pool"
