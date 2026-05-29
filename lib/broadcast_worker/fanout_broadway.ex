@@ -123,7 +123,21 @@ defmodule BroadcastWorker.FanoutBroadway do
             {[succ_info | succ_acc], fail_acc}
 
           {:error, reason} ->
-            fail_info = Map.put(base_info, "error", inspect(reason))
+            {error_string, error_type} = case reason do
+              :invalid_webhook -> {"invalid_webhook", "permanent"}
+              :bad_request -> {"bad_request", "permanent"}
+              :missing_webhook -> {"missing_webhook", "permanent"}
+              :invalid_action -> {"invalid_action", "permanent"}
+              {:server_error, _} -> {"server_error", "transient"}
+              :network_error -> {"network_error", "transient"}
+              :task_crashed -> {"task_crashed", "transient"}
+              _ -> {inspect(reason), "transient"}
+            end
+            
+            fail_info = base_info
+              |> Map.put("error", error_string)
+              |> Map.put("error_type", error_type)
+            
             {succ_acc, [fail_info | fail_acc]}
         end
       end)
