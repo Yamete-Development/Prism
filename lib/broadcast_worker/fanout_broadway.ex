@@ -147,6 +147,7 @@ defmodule BroadcastWorker.FanoutBroadway do
     Logger.info("Batch #{batch_id} done: #{ok_count} ok, #{fail_count} failed")
 
     payload = Jason.encode!(%{
+      batch_id: batch_id,
       status: "success",
       action: action,
       message_ids: Enum.reverse(successes), # We map successes to message_ids list

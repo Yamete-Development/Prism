@@ -26,7 +26,8 @@ defmodule BroadcastWorker.DiscordWorker do
       headers = [{"Content-Type", "application/json"}]
       body = if action == "delete", do: "", else: Jason.encode!(content)
 
-      checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
+      target_hash = :erlang.phash2(target)
+      checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}:#{target_hash}"
 
       cached_result = if batch_id do
         case Redix.command(:my_redix, ["GET", checkpoint_key]) do
