@@ -30,8 +30,8 @@ defmodule Prism.DiscordWorker do
         else
           content
         end
-
-        content
+        
+        Map.put(content, "allowed_mentions", %{"parse" => ["users"]})
       else
         content
       end
@@ -181,13 +181,13 @@ defmodule Prism.DiscordWorker do
         "guild_id" => target["guild_id"],
         "connection_id" => target["connection_id"],
         "hub_id" => target["hub_id"]
-      } |> :maps.filter(fn _, v -> v != nil end)
+      } |> Map.reject(fn {_, v} -> is_nil(v) end)
 
       {successes, failures} = if error_reason do
         {error_string, error_type} = case error_reason do
           :invalid_webhook -> {"invalid_webhook", "permanent"}
           :message_not_found -> {"message_not_found", "transient"}
-          :bad_request -> {"bad_request", "permanent"}
+          :bad_request -> {"bad_request", "transient"}
           :missing_webhook -> {"missing_webhook", "permanent"}
           :invalid_action -> {"invalid_action", "permanent"}
           {:server_error, _} -> {"server_error", "transient"}

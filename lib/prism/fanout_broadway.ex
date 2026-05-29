@@ -141,7 +141,7 @@ defmodule Prism.FanoutBroadway do
               {:rate_limited, retry_after_ms} -> {"rate_limited", "transient", %{"retry_after_ms" => retry_after_ms}}
               :invalid_webhook -> {"invalid_webhook", "permanent", %{}}
               :message_not_found -> {"message_not_found", "transient", %{}}
-              :bad_request -> {"bad_request", "permanent", %{}}
+              :bad_request -> {"bad_request", "transient", %{}}
               :missing_webhook -> {"missing_webhook", "permanent", %{}}
               :invalid_action -> {"invalid_action", "permanent", %{}}
               {:server_error, _} -> {"server_error", "transient", %{}}
