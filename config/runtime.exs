@@ -15,7 +15,7 @@ else
   redis_opts
 end
 
-config :broadcast_worker,
+config :prism,
   redis_opts: redis_opts,
   redis_stream_fast: System.get_env("REDIS_STREAM_FAST") || "discord:fanout:stream:fast",
   redis_stream_slow: System.get_env("REDIS_STREAM_SLOW") || "discord:fanout:stream:slow",
