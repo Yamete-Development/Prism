@@ -50,7 +50,7 @@ defmodule BroadcastWorker.FanoutBroadway do
 
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
-    polled_at = System.monotonic_time(:millisecond)
+    polled_at = :os.system_time(:millisecond)
     # OffBroadwayRedisStream returns data as [entry_id, [field1, value1, ...]]
     [id, fields] = data
 

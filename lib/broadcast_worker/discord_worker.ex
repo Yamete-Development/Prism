@@ -57,15 +57,17 @@ defmodule BroadcastWorker.DiscordWorker do
         case build_request(action, base_url, message_id, thread_id) do
           {:ok, method, url} ->
             req_start = System.monotonic_time(:millisecond)
+            req_start_wall = :os.system_time(:millisecond)
             result = do_http_request(method, url, headers, body, webhook_id, message_id)
             req_end = System.monotonic_time(:millisecond)
+            req_end_wall = :os.system_time(:millisecond)
 
             if Code.ensure_loaded?(Mix) and Mix.env() == :dev do
-              now_wall = :os.system_time(:millisecond)
-              time_since_enqueued = if enqueued_at, do: now_wall - enqueued_at, else: 0
-              time_since_polled = if polled_at, do: req_end - polled_at, else: 0
+              queue_time = if enqueued_at, do: polled_at - enqueued_at, else: 0
+              prep_time = if polled_at, do: req_start_wall - polled_at, else: 0
               http_time = req_end - req_start
-              Logger.info("[Timing] Webhook #{webhook_id} (batch #{batch_id || "N/A"}) - Total since enqueued: #{time_since_enqueued}ms | Since polled: #{time_since_polled}ms | HTTP request: #{http_time}ms")
+              total_time = if enqueued_at, do: req_end_wall - enqueued_at, else: 0
+              Logger.info("[Timing] Webhook #{webhook_id} (batch #{batch_id || "N/A"}) - Queue: #{queue_time}ms | Prep: #{prep_time}ms | Discord HTTP: #{http_time}ms | Total End-to-End: #{total_time}ms")
             end
 
             # Cache success
