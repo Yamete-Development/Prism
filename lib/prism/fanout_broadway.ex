@@ -28,6 +28,7 @@ defmodule Prism.FanoutBroadway do
         module: {
           OffBroadwayRedisStream.Producer,
           [
+            client: Prism.RedisClient,
             redis_client_opts: redis_opts,
             stream: stream_key,
             group: redis_group,
