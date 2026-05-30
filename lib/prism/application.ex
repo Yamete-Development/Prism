@@ -27,7 +27,7 @@ defmodule Prism.Application do
 
     children =
       [
-        {Finch, name: DiscordFinch, pools: %{"https://discord.com" => [size: 250]}},
+        {Finch, name: DiscordFinch, pools: %{"https://discord.com" => [size: 1000]}},
         {Task.Supervisor, name: Prism.TaskSup}
       ] ++
         redix_children ++

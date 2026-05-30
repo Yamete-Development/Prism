@@ -499,10 +499,12 @@ defmodule Prism.DiscordWorker do
         Logger.error("Bad request webhook_id=#{webhook_id} body=#{resp_body}")
         {:error, :bad_request}
 
-      {:ok, %{status: status}} when status in 500..599 ->
+      {:ok, %{status: status, body: resp_body}} when status in 500..599 ->
+        Logger.error("Server error #{status} for webhook_id=#{webhook_id}, body=#{resp_body}")
         {:error, {:server_error, status}}
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        Logger.error("Network error for webhook_id=#{webhook_id}: #{inspect(reason)}")
         {:error, :network_error}
 
       {:ok, %{status: status}} ->
