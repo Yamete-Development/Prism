@@ -20,7 +20,7 @@ defmodule Prism.FanoutBroadway do
 
     redis_group = Application.get_env(:prism, :redis_group, "elixir_fanout_pool")
 
-    # To safely stay under Discord's 50 req/sec global IP limit:
+    # To strictly stay under Discord's 50 req/sec global IP limit:
     # A batch has up to 80 targets (80 requests).
     # Fast lane: 1 batch per 2000ms = ~40 req/sec maximum
     # Slow lane: 1 batch per 8000ms = ~10 req/sec maximum
