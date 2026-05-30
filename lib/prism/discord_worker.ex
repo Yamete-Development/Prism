@@ -433,7 +433,8 @@ defmodule Prism.DiscordWorker do
   end
 
   defp do_http_request(method, url, headers, body, webhook_id, _message_id) do
-    case Finch.build(method, url, headers, body) |> Finch.request(DiscordFinch) do
+    case Finch.build(method, url, headers, body)
+         |> Finch.request(DiscordFinch, receive_timeout: 30_000, pool_timeout: 30_000) do
       {:ok, %{status: status, body: resp_body}} when status in 200..299 ->
         if method == :post do
           case Jason.decode(resp_body) do

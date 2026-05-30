@@ -136,7 +136,7 @@ defmodule Prism.FanoutBroadway do
             )
           end,
           max_concurrency: 20,
-          timeout: 15_000
+          timeout: 60_000
         )
         |> Enum.to_list()
 
