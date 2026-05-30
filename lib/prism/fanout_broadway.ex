@@ -36,11 +36,7 @@ defmodule Prism.FanoutBroadway do
             make_stream: true,
             receive_interval: 50
           ]
-        },
-        rate_limiting: [
-          allowed_messages: max_batches_per_sec,
-          interval: 1000
-        ]
+        }
       ],
       processors: [
         default: [concurrency: 50]
