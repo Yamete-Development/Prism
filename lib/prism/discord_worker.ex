@@ -459,8 +459,15 @@ defmodule Prism.DiscordWorker do
         end
 
       {:ok, %{status: 429, body: resp_body}} ->
-        payload = Jason.decode!(resp_body)
-        retry_after_ms = trunc(payload["retry_after"] * 1000)
+        retry_after_ms =
+          case Jason.decode(resp_body) do
+            {:ok, %{"retry_after" => retry_after}} when is_number(retry_after) ->
+              trunc(retry_after * 1000)
+
+            _ ->
+              5000
+          end
+
         {:error, {:rate_limited, retry_after_ms}}
 
       {:ok, %{status: 404, body: resp_body}} ->
