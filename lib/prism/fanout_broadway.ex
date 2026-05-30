@@ -20,7 +20,7 @@ defmodule Prism.FanoutBroadway do
 
     redis_group = Application.get_env(:prism, :redis_group, "elixir_fanout_pool")
 
-    max_batches_per_sec = Application.get_env(:prism, :max_batches_per_sec, 1)
+    max_batches_per_sec = Application.get_env(:prism, :max_batches_per_sec, 100)
 
     Broadway.start_link(__MODULE__,
       name: name,

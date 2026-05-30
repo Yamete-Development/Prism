@@ -21,4 +21,4 @@ config :prism,
   redis_stream_slow: System.get_env("REDIS_STREAM_SLOW") || "discord:fanout:stream:slow",
   redis_callback_stream: System.get_env("REDIS_CALLBACK_STREAM") || "discord:fanout:callbacks",
   redis_group: System.get_env("REDIS_GROUP") || "elixir_fanout_pool",
-  max_batches_per_sec: String.to_integer(System.get_env("MAX_BATCHES_PER_SEC") || "1")
+  max_batches_per_sec: String.to_integer(System.get_env("MAX_BATCHES_PER_SEC") || "100")
