@@ -18,13 +18,10 @@ defmodule Prism.FanoutBroadway do
         Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow")
       end
 
-    redis_group = Application.get_env(:prism, :redis_group, "elixir_fanout_pool")
-
-    # We allow each lane to process up to 1 batch (80 targets) per 1.6 seconds.
-    # This equals a maximum of 50 requests per second per lane.
-    # By giving both lanes 50 req/s capacity, the slow lane is no longer artificially
-    # choked to 10 req/s and can actually finish a 343-server broadcast in 7 seconds!
-    rate_interval = 1600
+    # We allow each lane to process up to 1 batch (80 targets) per 500 milliseconds.
+    # This gives Elixir the ability to burst at up to 160 requests per second per lane,
+    # matching and exceeding the speed of the old Python microservice.
+    rate_interval = 500
 
     Broadway.start_link(__MODULE__,
       name: name,
