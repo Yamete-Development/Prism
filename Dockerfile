@@ -1,5 +1,5 @@
 # Build stage
-FROM elixir:1.18-alpine AS builder
+FROM elixir:1.19.5-alpine AS builder
 
 RUN apk add --no-cache build-base git
 
@@ -21,7 +21,7 @@ RUN mix compile
 RUN mix release
 
 # Runtime stage
-FROM elixir:1.18-alpine AS app
+FROM elixir:1.19.5-alpine AS app
 
 RUN apk add --no-cache \
     libstdc++ \
