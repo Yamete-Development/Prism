@@ -78,6 +78,7 @@ defmodule Prism.FanoutBroadway do
         action = Map.get(payload, "action", "execute")
         discord_payload = Map.get(payload, "payload", %{})
         parent_message_id = Map.get(payload, "message_id")
+        hub_name = Map.get(payload, "hub_name")
 
         process_batch(
           action,
@@ -86,7 +87,8 @@ defmodule Prism.FanoutBroadway do
           targets,
           polled_at,
           enqueued_at,
-          parent_message_id
+          parent_message_id,
+          hub_name
         )
 
         message
@@ -116,7 +118,8 @@ defmodule Prism.FanoutBroadway do
          targets,
          polled_at,
          enqueued_at,
-         parent_message_id
+         parent_message_id,
+         payload_hub_name \\ nil
        ) do
     if ref = :persistent_term.get(:active_batches, nil) do
       :atomics.add(ref, 1, 1)
@@ -242,6 +245,22 @@ defmodule Prism.FanoutBroadway do
       idx = :erlang.phash2(System.unique_integer(), 5)
       Redix.command(:"my_redix_#{idx}", ["XADD", callback_stream, "*", "payload", payload])
       Logger.info("Published callback to #{callback_stream} for batch #{batch_id}")
+
+      # Send a real-time event via :pg for the dashboard to render
+      # IMPORTANT: Never send confidential info (like raw Hub IDs or Guild IDs) to the public Dashboard
+      event_data = %{
+        batch_id: batch_id,
+        action: action,
+        ok_count: ok_count,
+        fail_count: fail_count,
+        hub_id: payload_hub_name || "Private Hub",
+        guild_id: "hidden",
+        timestamp: :os.system_time(:millisecond)
+      }
+
+      Enum.each(:pg.get_members(:prism_events), fn pid ->
+        send(pid, {:batch_processed, event_data})
+      end)
     after
       if ref = :persistent_term.get(:active_batches, nil) do
         :atomics.sub(ref, 1, 1)

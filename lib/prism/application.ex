@@ -9,6 +9,10 @@ defmodule Prism.Application do
   def start(_type, _args) do
     require Logger
 
+    unless Node.alive?() do
+      Node.start(:prism, :shortnames)
+    end
+
     Logger.info(
       "[Prism] Starting up! Initializing Redix pool (5 conns) and Finch pool (250 conns)."
     )
@@ -25,10 +29,18 @@ defmodule Prism.Application do
         )
       end
 
+    topologies = [
+      interchat: [
+        strategy: Cluster.Strategy.LocalEpmd
+      ]
+    ]
+
     children =
       [
+        {Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]},
         {Finch, name: DiscordFinch, pools: %{"https://discord.com" => [size: 1000]}},
-        {Task.Supervisor, name: Prism.TaskSup}
+        {Task.Supervisor, name: Prism.TaskSup},
+        {Prism.MetricsAPI, []}
       ] ++
         redix_children ++
         [

@@ -49,7 +49,14 @@ defmodule Prism.DiscordWorker do
               content
             end
 
-          Map.put(content, "allowed_mentions", %{"parse" => ["users"]})
+          allowed_mentions =
+            if is_binary(mention_id) do
+              %{"users" => [mention_id]}
+            else
+              %{"parse" => []}
+            end
+
+          Map.put(content, "allowed_mentions", allowed_mentions)
         else
           content
         end
