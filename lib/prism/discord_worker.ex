@@ -29,34 +29,10 @@ defmodule Prism.DiscordWorker do
       thread_id = Map.get(target, "thread_id")
       message_id = Map.get(target, "message_id")
 
-      mutations = Map.get(target, "mutations") || %{}
-      mention_id = Map.get(mutations, "reply_mention_id")
-      reply_component = Map.get(mutations, "reply_component")
-
       content =
         if is_map(content) and action in ["execute", "edit"] do
-          {badge_header, content} = Map.pop(content, "badge_header", "")
-
-          current_content = Map.get(content, "content", "")
-          mention_str = if is_binary(mention_id), do: "<@#{mention_id}> ", else: ""
-          content = Map.put(content, "content", badge_header <> mention_str <> current_content)
-
-          content =
-            if is_list(reply_component) do
-              current_components = Map.get(content, "components") || []
-              Map.put(content, "components", current_components ++ reply_component)
-            else
-              content
-            end
-
-          allowed_mentions =
-            if is_binary(mention_id) do
-              %{"users" => [mention_id]}
-            else
-              %{"parse" => []}
-            end
-
-          Map.put(content, "allowed_mentions", allowed_mentions)
+          overrides = Map.get(target, "overrides") || %{}
+          Map.merge(content, overrides)
         else
           content
         end
@@ -410,7 +386,7 @@ defmodule Prism.DiscordWorker do
       json = Jason.encode!(payload)
 
       callback_stream =
-        Application.get_env(:broadcast_worker, :redis_callback_stream, "discord:fanout:callbacks")
+        Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
 
       redix_command(["XADD", callback_stream, "*", "payload", json])
     end

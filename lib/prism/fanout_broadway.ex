@@ -20,10 +20,8 @@ defmodule Prism.FanoutBroadway do
 
     redis_group = Application.get_env(:prism, :redis_group, "elixir_fanout_pool")
 
-    # We allow each lane to process up to 1 batch (80 targets) per 500 milliseconds.
-    # This gives Elixir the ability to burst at up to 160 requests per second per lane,
-    # matching and exceeding the speed of the old Python microservice.
-    rate_interval = 500
+    max_batches_per_sec = Application.get_env(:prism, :max_batches_per_sec, 1)
+    rate_interval = div(1000, max(max_batches_per_sec, 1))
 
     Broadway.start_link(__MODULE__,
       name: name,
@@ -78,7 +76,7 @@ defmodule Prism.FanoutBroadway do
         action = Map.get(payload, "action", "execute")
         discord_payload = Map.get(payload, "payload", %{})
         parent_message_id = Map.get(payload, "message_id")
-        hub_name = Map.get(payload, "hub_name")
+        metadata = Map.get(payload, "metadata", %{})
 
         process_batch(
           action,
@@ -88,7 +86,7 @@ defmodule Prism.FanoutBroadway do
           polled_at,
           enqueued_at,
           parent_message_id,
-          hub_name
+          metadata
         )
 
         message
@@ -119,7 +117,7 @@ defmodule Prism.FanoutBroadway do
          polled_at,
          enqueued_at,
          parent_message_id,
-         payload_hub_name \\ nil
+         payload_metadata
        ) do
     if ref = :persistent_term.get(:active_batches, nil) do
       :atomics.add(ref, 1, 1)
@@ -247,16 +245,15 @@ defmodule Prism.FanoutBroadway do
       Logger.info("Published callback to #{callback_stream} for batch #{batch_id}")
 
       # Send a real-time event via :pg for the dashboard to render
-      # IMPORTANT: Never send confidential info (like raw Hub IDs or Guild IDs) to the public Dashboard
       event_data = %{
         batch_id: batch_id,
         action: action,
         ok_count: ok_count,
         fail_count: fail_count,
-        hub_id: payload_hub_name || "Private Hub",
-        guild_id: "hidden",
         timestamp: :os.system_time(:millisecond)
       }
+
+      event_data = Map.merge(event_data, payload_metadata || %{})
 
       Enum.each(:pg.get_members(:prism_events), fn pid ->
         send(pid, {:batch_processed, event_data})
