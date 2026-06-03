@@ -4,6 +4,8 @@ Prism is a high-performance, asynchronous worker pool written in Elixir. It acts
 
 Instead of managing HTTP request loops, retries, and rate limits within your main application (like a Python bot), you enqueue standard JSON payloads to a Redis Stream. Prism pulls these batches, fans them out concurrently, handles all Discord HTTP `429 Too Many Requests` backpressure automatically, and publishes a summary callback via Redis when the batch is finished.
 
+For execute batches, Prism can also include the originating message ID in the callback and write a durable reply delivery index to Redis. That lets downstream consumers recover reply, edit, and delete state even if the database callback lags behind delivery.
+
 Prism is entirely payload-agnostic. It does not enforce any specific Discord formatting rules, making it a perfectly general-purpose tool for any Discord bot or application that needs to broadcast messages to hundreds or thousands of webhooks quickly.
 
 ## Architecture
@@ -15,6 +17,7 @@ This worker uses **Broadway** to process Redis Stream messages concurrently, wit
 - **Smart Retries & Backpressure:** Automatically intercepts Discord's `429` rate limit responses, reads the `retry_after` header, and spawns background tasks to complete the request without blocking the main pipeline. 
 - **Target Overrides:** Efficiently send the exact same base payload to 99% of targets, while providing a target-specific `overrides` dictionary (e.g. for custom mentions) that Prism will merge on the fly.
 - **Callback System:** Emits real-time event summaries (successes vs. permanent/transient failures) back to a Redis Stream so your main application can delete dead webhooks from its database.
+- **Durable Reply Index:** Optionally publishes the root message ID alongside execute callbacks and stores a Redis reply map for downstream recovery.
 
 ## Integration Contract
 
@@ -34,7 +37,11 @@ Configuration is handled dynamically via environment variables. See the provided
 | `REDIS_STREAM_SLOW` | The name of the slow lane Redis stream to consume from. | `discord:fanout:stream:slow` |
 | `REDIS_CALLBACK_STREAM` | The name of the Redis stream to publish callbacks to. | `discord:fanout:callbacks` |
 | `REDIS_GROUP` | The Redis stream consumer group name. | `elixir_fanout_pool` |
-| `MAX_BATCHES_PER_SEC` | Rate limit control. 1 batch = up to 80 targets. | `1` |
+| `MAX_BATCHES_PER_SEC` | Rate limit control. 1 batch = up to 80 targets. | `5` |
+| `PRISM_INCLUDE_PARENT_MESSAGE_ID` | Include the root message ID in execute callbacks. | `true` |
+| `PRISM_REPLY_INDEX_ENABLED` | Persist the durable Redis reply index for execute callbacks. | `true` |
+| `PRISM_REPLY_INDEX_PREFIX` | Redis key prefix used for reply delivery state. | `prism:delivery` |
+| `PRISM_REPLY_INDEX_TTL_SECONDS` | TTL for reply delivery index keys. | `604800` |
 
 ## Getting Started
 
