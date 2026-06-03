@@ -119,6 +119,9 @@ defmodule Prism.FanoutBroadway do
          parent_message_id,
          payload_metadata
        ) do
+    include_parent_message_id =
+      Application.get_env(:prism, :callback_include_parent_message_id, true)
+
     if ref = :persistent_term.get(:active_batches, nil) do
       :atomics.add(ref, 1, 1)
     end
@@ -227,15 +230,27 @@ defmodule Prism.FanoutBroadway do
       fail_count = length(failures)
       Logger.info("Batch #{batch_id} done: #{ok_count} ok, #{fail_count} failed")
 
-      payload =
-        Jason.encode!(%{
-          batch_id: batch_id,
-          status: "success",
-          action: action,
-          # We map successes to message_ids list
-          message_ids: Enum.reverse(successes),
-          failures: Enum.reverse(failures)
-        })
+      if action == "execute" and parent_message_id and reply_index_enabled?() do
+        store_reply_index(parent_message_id, successes)
+      end
+
+      payload_map = %{
+        batch_id: batch_id,
+        status: "success",
+        action: action,
+        # We map successes to message_ids list
+        message_ids: Enum.reverse(successes),
+        failures: Enum.reverse(failures)
+      }
+
+      payload_map =
+        if include_parent_message_id and parent_message_id do
+          Map.put(payload_map, :parent_message_id, parent_message_id)
+        else
+          payload_map
+        end
+
+      payload = Jason.encode!(payload_map)
 
       callback_stream =
         Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
@@ -263,5 +278,34 @@ defmodule Prism.FanoutBroadway do
         :atomics.sub(ref, 1, 1)
       end
     end
+  end
+
+  defp store_reply_index(parent_message_id, successes) when is_binary(parent_message_id) do
+    reply_index_prefix = Application.get_env(:prism, :reply_index_prefix, "prism:delivery")
+    reply_index_ttl = Integer.to_string(Application.get_env(:prism, :reply_index_ttl_seconds, 604800))
+
+    reply_key = "#{reply_index_prefix}:reply:#{parent_message_id}"
+
+    Enum.each(successes, fn success ->
+      channel_id = Map.get(success, "channel_id")
+      broadcast_id = Map.get(success, "message_id")
+
+      if is_binary(channel_id) and is_binary(broadcast_id) do
+        redix_command(["HSET", reply_key, channel_id, broadcast_id])
+        redix_command(["EXPIRE", reply_key, reply_index_ttl])
+        redix_command(["SETEX", "#{reply_index_prefix}:copy:#{broadcast_id}", reply_index_ttl, parent_message_id])
+      end
+    end)
+  end
+
+  defp store_reply_index(_parent_message_id, _successes), do: :ok
+
+  defp reply_index_enabled? do
+    Application.get_env(:prism, :reply_index_enabled, true)
+  end
+
+  defp redix_command(command) do
+    idx = :erlang.phash2(System.unique_integer(), 5)
+    Redix.command(:"my_redix_#{idx}", command)
   end
 end

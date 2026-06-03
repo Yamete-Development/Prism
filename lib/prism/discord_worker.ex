@@ -351,15 +351,13 @@ defmodule Prism.DiscordWorker do
       {successes, failures} =
         if error_reason do
           {error_string, error_type} =
-            case error_reason do
-              :invalid_webhook -> {"invalid_webhook", "permanent"}
-              :message_not_found -> {"message_not_found", "transient"}
-              :bad_request -> {"bad_request", "transient"}
-              :missing_webhook -> {"missing_webhook", "permanent"}
-              :invalid_action -> {"invalid_action", "permanent"}
-              {:server_error, _} -> {"server_error", "transient"}
-              :network_error -> {"network_error", "transient"}
-              _ -> {inspect(error_reason), "transient"}
+            cond do
+              error_reason == :invalid_webhook -> {"invalid_webhook", "permanent"}
+              error_reason == :message_not_found -> {"message_not_found", "transient"}
+              error_reason == :bad_request -> {"bad_request", "transient"}
+              error_reason == :server_error -> {"server_error", "transient"}
+              error_reason == :network_error -> {"network_error", "transient"}
+              true -> {inspect(error_reason), "transient"}
             end
 
           {[], [Map.merge(base_info, %{"error" => error_string, "error_type" => error_type})]}

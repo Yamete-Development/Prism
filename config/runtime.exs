@@ -1,5 +1,9 @@
 import Config
 
+parse_bool = fn value ->
+  String.downcase(to_string(value || "true")) in ["1", "true", "yes", "on"]
+end
+
 redis_host = System.get_env("REDIS_HOST") || "localhost"
 redis_port = String.to_integer(System.get_env("REDIS_PORT") || "6379")
 redis_password = System.get_env("REDIS_PASSWORD")
@@ -21,4 +25,8 @@ config :prism,
   redis_stream_slow: System.get_env("REDIS_STREAM_SLOW") || "discord:fanout:stream:slow",
   redis_callback_stream: System.get_env("REDIS_CALLBACK_STREAM") || "discord:fanout:callbacks",
   redis_group: System.get_env("REDIS_GROUP") || "elixir_fanout_pool",
-  max_batches_per_sec: String.to_integer(System.get_env("MAX_BATCHES_PER_SEC") || "5")
+  max_batches_per_sec: String.to_integer(System.get_env("MAX_BATCHES_PER_SEC") || "5"),
+  callback_include_parent_message_id: parse_bool.(System.get_env("PRISM_INCLUDE_PARENT_MESSAGE_ID")),
+  reply_index_enabled: parse_bool.(System.get_env("PRISM_REPLY_INDEX_ENABLED")),
+  reply_index_prefix: System.get_env("PRISM_REPLY_INDEX_PREFIX") || "prism:delivery",
+  reply_index_ttl_seconds: String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800")
