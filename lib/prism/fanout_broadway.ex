@@ -230,7 +230,7 @@ defmodule Prism.FanoutBroadway do
       fail_count = length(failures)
       Logger.info("Batch #{batch_id} done: #{ok_count} ok, #{fail_count} failed")
 
-      if action == "execute" and parent_message_id and reply_index_enabled?() do
+      if action == "execute" and not is_nil(parent_message_id) and reply_index_enabled?() do
         store_reply_index(parent_message_id, successes)
       end
 
