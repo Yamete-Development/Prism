@@ -38,6 +38,8 @@ Configuration is handled dynamically via environment variables. See the provided
 | `REDIS_CALLBACK_STREAM` | The name of the Redis stream to publish callbacks to. | `discord:fanout:callbacks` |
 | `REDIS_GROUP` | The Redis stream consumer group name. | `elixir_fanout_pool` |
 | `MAX_BATCHES_PER_SEC` | Rate limit control. 1 batch = up to 80 targets. | `5` |
+| `PRISM_BROADWAY_CONCURRENCY` | Maximum number of batches processed concurrently per lane. | `8` |
+| `PRISM_BATCH_MAX_CONCURRENCY` | Maximum concurrent HTTP requests fired per batch. | `20` |
 | `PRISM_INCLUDE_PARENT_MESSAGE_ID` | Include the root message ID in execute callbacks. | `true` |
 | `PRISM_REPLY_INDEX_ENABLED` | Persist the durable Redis reply index for execute callbacks. | `true` |
 | `PRISM_REPLY_INDEX_PREFIX` | Redis key prefix used for reply delivery state. | `prism:delivery` |
