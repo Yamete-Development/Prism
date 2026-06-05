@@ -44,7 +44,11 @@ defmodule Prism.FanoutBroadway do
         ]
       ],
       processors: [
-        default: [concurrency: 50]
+        default: [
+          concurrency: 50,
+          max_demand: 1,
+          min_demand: 0
+        ]
       ]
       # No batcher needed, each message is processed independently
     )
