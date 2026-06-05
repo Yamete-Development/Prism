@@ -227,7 +227,8 @@ defmodule Prism.FanoutBroadway do
 
       ok_count = length(successes)
       fail_count = length(failures)
-      Logger.info("Batch #{batch_id} done: #{ok_count} ok, #{fail_count} failed")
+      parent_log = if parent_message_id, do: " (Parent Msg: #{parent_message_id})", else: ""
+      Logger.info("Batch #{batch_id}#{parent_log} done: #{ok_count} ok, #{fail_count} failed")
 
       if action == "execute" and not is_nil(parent_message_id) and reply_index_enabled?() do
         store_reply_index(parent_message_id, successes)
@@ -256,7 +257,7 @@ defmodule Prism.FanoutBroadway do
 
       idx = :erlang.phash2(System.unique_integer(), 5)
       Redix.command(:"my_redix_#{idx}", ["XADD", callback_stream, "*", "payload", payload])
-      Logger.info("Published callback to #{callback_stream} for batch #{batch_id}")
+      Logger.info("Published callback to #{callback_stream} for batch #{batch_id}#{parent_log}")
 
       # Send a real-time event via :pg for the dashboard to render
       event_data = %{
