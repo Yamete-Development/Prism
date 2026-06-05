@@ -245,6 +245,7 @@ defmodule Prism.DiscordWorker do
          parent_msg_id,
          attempt
        ) do
+    Logger.info("Retrying webhook_id=#{webhook_id} (Attempt #{attempt}) in background task...")
     result = do_http_request(method, url, headers, body, webhook_id, message_id)
 
     case result do
@@ -332,6 +333,7 @@ defmodule Prism.DiscordWorker do
         publish_partial(action, target, batch_id, parent_msg_id, nil, permanent_reason)
 
       {:ok, msg_id} ->
+        Logger.info("Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!")
         publish_partial(action, target, batch_id, parent_msg_id, msg_id, nil)
     end
   end
