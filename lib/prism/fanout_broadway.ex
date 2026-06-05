@@ -21,7 +21,7 @@ defmodule Prism.FanoutBroadway do
     redis_group = Application.get_env(:prism, :redis_group, "elixir_fanout_pool")
 
     max_batches_per_sec = Application.get_env(:prism, :max_batches_per_sec, 5)
-    broadway_concurrency = Application.get_env(:prism, :broadway_concurrency, 8)
+    broadway_concurrency = Application.get_env(:prism, :broadway_concurrency, 50)
 
     Broadway.start_link(__MODULE__,
       name: name,
@@ -136,7 +136,7 @@ defmodule Prism.FanoutBroadway do
       :atomics.add(ref, 1, 1)
     end
 
-    batch_max_concurrency = Application.get_env(:prism, :batch_max_concurrency, 20)
+    batch_max_concurrency = Application.get_env(:prism, :batch_max_concurrency, 80)
 
     try do
       # Process targets with bounded concurrency and wait for completion
