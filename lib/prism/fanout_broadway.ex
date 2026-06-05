@@ -281,20 +281,39 @@ defmodule Prism.FanoutBroadway do
 
   defp store_reply_index(parent_message_id, successes) when is_binary(parent_message_id) do
     reply_index_prefix = Application.get_env(:prism, :reply_index_prefix, "prism:delivery")
-    reply_index_ttl = Integer.to_string(Application.get_env(:prism, :reply_index_ttl_seconds, 604800))
+
+    reply_index_ttl =
+      Integer.to_string(Application.get_env(:prism, :reply_index_ttl_seconds, 604_800))
 
     reply_key = "#{reply_index_prefix}:reply:#{parent_message_id}"
 
-    Enum.each(successes, fn success ->
-      channel_id = Map.get(success, "channel_id")
-      broadcast_id = Map.get(success, "message_id")
+    commands =
+      Enum.flat_map(successes, fn success ->
+        channel_id = Map.get(success, "channel_id")
+        broadcast_id = Map.get(success, "message_id")
 
-      if is_binary(channel_id) and is_binary(broadcast_id) do
-        redix_command(["HSET", reply_key, channel_id, broadcast_id])
-        redix_command(["EXPIRE", reply_key, reply_index_ttl])
-        redix_command(["SETEX", "#{reply_index_prefix}:copy:#{broadcast_id}", reply_index_ttl, parent_message_id])
-      end
-    end)
+        if is_binary(channel_id) and is_binary(broadcast_id) do
+          [
+            ["HSET", reply_key, channel_id, broadcast_id],
+            [
+              "SETEX",
+              "#{reply_index_prefix}:copy:#{broadcast_id}",
+              reply_index_ttl,
+              parent_message_id
+            ]
+          ]
+        else
+          []
+        end
+      end)
+
+    if commands != [] do
+      # Add exactly one EXPIRE for the reply_key at the end
+      commands = commands ++ [["EXPIRE", reply_key, reply_index_ttl]]
+
+      idx = :erlang.phash2(System.unique_integer(), 5)
+      Redix.pipeline(:"my_redix_#{idx}", commands)
+    end
   end
 
   defp store_reply_index(_parent_message_id, _successes), do: :ok
