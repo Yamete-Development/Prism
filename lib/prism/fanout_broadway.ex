@@ -121,6 +121,9 @@ defmodule Prism.FanoutBroadway do
     include_parent_message_id =
       Application.get_env(:prism, :callback_include_parent_message_id, true)
 
+    queue_time = polled_at - enqueued_at
+    Logger.info("Started batch #{batch_id} (Queue Time: #{queue_time}ms, Targets: #{length(targets)})")
+
     if ref = :persistent_term.get(:active_batches, nil) do
       :atomics.add(ref, 1, 1)
     end
@@ -227,8 +230,9 @@ defmodule Prism.FanoutBroadway do
 
       ok_count = length(successes)
       fail_count = length(failures)
+      batch_time = :os.system_time(:millisecond) - polled_at
       parent_log = if parent_message_id, do: " (Parent Msg: #{parent_message_id})", else: ""
-      Logger.info("Batch #{batch_id}#{parent_log} done: #{ok_count} ok, #{fail_count} failed")
+      Logger.info("Batch #{batch_id}#{parent_log} done in #{batch_time}ms: #{ok_count} ok, #{fail_count} failed")
 
       if action == "execute" and not is_nil(parent_message_id) and reply_index_enabled?() do
         store_reply_index(parent_message_id, successes)
