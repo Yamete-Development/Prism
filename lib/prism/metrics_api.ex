@@ -23,13 +23,14 @@ defmodule Prism.MetricsAPI do
   def handle_call(:get_metrics, _from, state) do
     # Just basic metrics for now
     active_batches = :atomics.get(:persistent_term.get(:active_batches), 1)
-    
+
     metrics = %{
       node: node(),
       uptime: System.system_time(:second) - state.start_time,
       active_batches: active_batches,
       memory: :erlang.memory(:total)
     }
+
     {:reply, metrics, state}
   end
 end
