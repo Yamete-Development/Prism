@@ -107,7 +107,8 @@ defmodule Prism.DiscordWorker do
                   batch_id,
                   delay_ms,
                   1,
-                  parent_msg_id
+                  parent_msg_id,
+                  :rate_limited
                 )
 
                 # Unblock batch
@@ -126,7 +127,8 @@ defmodule Prism.DiscordWorker do
                   batch_id,
                   2000,
                   1,
-                  parent_msg_id
+                  parent_msg_id,
+                  :server_error
                 )
 
                 {:ok, nil}
@@ -144,7 +146,8 @@ defmodule Prism.DiscordWorker do
                   batch_id,
                   1000,
                   1,
-                  parent_msg_id
+                  parent_msg_id,
+                  :message_not_found
                 )
 
                 {:ok, nil}
@@ -162,7 +165,8 @@ defmodule Prism.DiscordWorker do
                   batch_id,
                   1000,
                   1,
-                  parent_msg_id
+                  parent_msg_id,
+                  :network_error
                 )
 
                 {:ok, nil}
@@ -211,7 +215,8 @@ defmodule Prism.DiscordWorker do
          batch_id,
          delay_ms,
          attempt,
-         parent_msg_id
+         parent_msg_id,
+         reason
        ) do
     Task.Supervisor.start_child(Prism.TaskSup, fn ->
       Process.sleep(delay_ms)
@@ -227,7 +232,8 @@ defmodule Prism.DiscordWorker do
         message_id,
         batch_id,
         parent_msg_id,
-        attempt
+        attempt,
+        reason
       )
     end)
   end
@@ -243,9 +249,11 @@ defmodule Prism.DiscordWorker do
          message_id,
          batch_id,
          parent_msg_id,
-         attempt
+         attempt,
+         reason
        ) do
-    Logger.info("Retrying webhook_id=#{webhook_id} (Attempt #{attempt}) in background task...")
+    reason_str = if reason, do: " (Reason: #{reason})", else: ""
+    Logger.info("Retrying webhook_id=#{webhook_id} (Attempt #{attempt})#{reason_str} in background task...")
     result = do_http_request(method, url, headers, body, webhook_id, message_id)
 
     case result do
@@ -263,7 +271,8 @@ defmodule Prism.DiscordWorker do
           message_id,
           batch_id,
           parent_msg_id,
-          attempt + 1
+          attempt + 1,
+          :rate_limited
         )
 
       {:error, {:server_error, _}} ->
@@ -283,7 +292,8 @@ defmodule Prism.DiscordWorker do
             message_id,
             batch_id,
             parent_msg_id,
-            attempt + 1
+            attempt + 1,
+            :server_error
           )
         end
 
@@ -304,7 +314,8 @@ defmodule Prism.DiscordWorker do
             message_id,
             batch_id,
             parent_msg_id,
-            attempt + 1
+            attempt + 1,
+            :message_not_found
           )
         end
 
@@ -325,7 +336,8 @@ defmodule Prism.DiscordWorker do
             message_id,
             batch_id,
             parent_msg_id,
-            attempt + 1
+            attempt + 1,
+            :network_error
           )
         end
 
