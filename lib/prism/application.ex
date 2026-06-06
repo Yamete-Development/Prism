@@ -52,7 +52,8 @@ defmodule Prism.Application do
             {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Slow, lane: :slow]},
             id: :fanout_broadway_slow
           ),
-          {Prism.MetricsLogger, []}
+          {Prism.MetricsLogger, []},
+          {Prism.LogLevelSyncer, []}
         ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

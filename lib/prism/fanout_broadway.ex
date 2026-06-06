@@ -128,7 +128,7 @@ defmodule Prism.FanoutBroadway do
 
     queue_time = polled_at - enqueued_at
 
-    Logger.info(
+    Logger.debug(
       "Started batch #{batch_id} (Queue Time: #{queue_time}ms, Targets: #{length(targets)})"
     )
 
@@ -246,7 +246,7 @@ defmodule Prism.FanoutBroadway do
       batch_time = :os.system_time(:millisecond) - polled_at
       parent_log = if parent_message_id, do: " (Parent Msg: #{parent_message_id})", else: ""
 
-      Logger.info(
+      Logger.debug(
         "Batch #{batch_id}#{parent_log} done in #{batch_time}ms: #{ok_count} ok, #{fail_count} failed"
       )
 
@@ -277,7 +277,7 @@ defmodule Prism.FanoutBroadway do
 
       idx = :erlang.phash2(System.unique_integer(), 5)
       Redix.command(:"my_redix_#{idx}", ["XADD", callback_stream, "*", "payload", payload])
-      Logger.info("Published callback to #{callback_stream} for batch #{batch_id}#{parent_log}")
+      Logger.debug("Published callback to #{callback_stream} for batch #{batch_id}#{parent_log}")
 
       # Send a real-time event via :pg for the dashboard to render
       event_data = %{
