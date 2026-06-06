@@ -61,3 +61,36 @@ Configuration is handled dynamically via environment variables. See the provided
    ```bash
    mix run --no-halt
    ```
+
+## Docker
+
+```bash
+# Build
+docker build -t interchat-broadcast-worker .
+
+# Run
+docker run -d \
+  -e REDIS_HOST=host.docker.internal \
+  -e REDIS_PORT=6379 \
+  interchat-broadcast-worker
+```
+
+## Project Structure
+
+```
+lib/
+├── prism.ex                 # Application entrypoint
+├── prism/
+│   ├── application.ex       # Supervision tree
+│   ├── discord_worker.ex    # Finch HTTP client implementation
+│   ├── fanout_broadway.ex   # Broadway topology for Redis Streams
+│   ├── metrics_api.ex       # API for exposing telemetry/metrics
+│   ├── metrics_logger.ex    # Logger for processing metrics
+│   └── redis_client.ex      # Redis connection management
+mix.exs                      # Project dependencies & configuration
+test/                        # Unit and integration tests
+```
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See the [LICENSE](LICENSE) file for details.
