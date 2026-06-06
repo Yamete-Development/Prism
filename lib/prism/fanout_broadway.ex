@@ -247,7 +247,7 @@ defmodule Prism.FanoutBroadway do
       parent_log = if parent_message_id, do: " (Parent Msg: #{parent_message_id})", else: ""
 
       Logger.debug(
-        "Batch #{batch_id}#{parent_log} done in #{batch_time}ms: #{ok_count} ok, #{fail_count} failed"
+        "Batch #{batch_id}#{parent_log} done in #{batch_time}ms: #{ok_count} ok, #{fail_count} unsuccessful"
       )
 
       if action == "execute" and not is_nil(parent_message_id) and reply_index_enabled?() do
