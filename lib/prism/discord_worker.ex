@@ -454,7 +454,7 @@ defmodule Prism.DiscordWorker do
           {:ok, nil}
         end
 
-      {:ok, %{status: 429, body: resp_body}} ->
+      {:ok, %{status: 429, body: resp_body, headers: headers}} ->
         retry_after_ms =
           case Jason.decode(resp_body) do
             {:ok, %{"retry_after" => retry_after}} when is_number(retry_after) ->
@@ -463,6 +463,14 @@ defmodule Prism.DiscordWorker do
             _ ->
               5000
           end
+
+        bucket = Enum.find_value(headers, fn {k, v} -> if String.downcase(k) == "x-ratelimit-bucket", do: v end)
+        scope = Enum.find_value(headers, fn {k, v} -> if String.downcase(k) == "x-ratelimit-scope", do: v end)
+        global = Enum.find_value(headers, fn {k, v} -> if String.downcase(k) == "x-ratelimit-global", do: v end)
+
+        Logger.info(
+          "Rate limited on webhook_id=#{webhook_id} - Delay: #{retry_after_ms}ms | Scope: #{scope || "unknown"} | Bucket: #{bucket || "unknown"} | Global: #{global || "false"}"
+        )
 
         {:error, {:rate_limited, retry_after_ms}}
 
