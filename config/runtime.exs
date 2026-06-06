@@ -34,6 +34,4 @@ config :prism,
   reply_index_enabled: parse_bool.(System.get_env("PRISM_REPLY_INDEX_ENABLED")),
   reply_index_prefix: System.get_env("PRISM_REPLY_INDEX_PREFIX") || "prism:delivery",
   reply_index_ttl_seconds:
-    String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800"),
-  max_rate_limit_retries:
-    String.to_integer(System.get_env("PRISM_MAX_RATE_LIMIT_RETRIES") || "10")
+    String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800")

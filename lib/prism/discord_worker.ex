@@ -258,35 +258,22 @@ defmodule Prism.DiscordWorker do
 
     case result do
       {:error, {:rate_limited, delay_ms}} ->
-        max_rate_limit_retries = Application.get_env(:prism, :max_rate_limit_retries, 10)
+        Process.sleep(delay_ms)
 
-        if attempt >= max_rate_limit_retries do
-          Logger.warning(
-            "Giving up on webhook_id=#{webhook_id} after #{attempt} rate limit retries"
-          )
-
-          publish_partial(action, target, batch_id, parent_msg_id, nil, :rate_limited)
-        else
-          # Exponential backoff: use at least Discord's retry_after,
-          # but also back off based on attempt count (capped at 60s)
-          backoff_ms = max(delay_ms, min(1000 * Integer.pow(2, attempt), 60_000))
-          Process.sleep(backoff_ms)
-
-          retry_loop(
-            action,
-            target,
-            method,
-            url,
-            headers,
-            body,
-            webhook_id,
-            message_id,
-            batch_id,
-            parent_msg_id,
-            attempt + 1,
-            :rate_limited
-          )
-        end
+        retry_loop(
+          action,
+          target,
+          method,
+          url,
+          headers,
+          body,
+          webhook_id,
+          message_id,
+          batch_id,
+          parent_msg_id,
+          attempt + 1,
+          :rate_limited
+        )
 
       {:error, {:server_error, _}} ->
         if attempt >= 3 do
@@ -468,13 +455,28 @@ defmodule Prism.DiscordWorker do
         end
 
       {:ok, %{status: 429, body: resp_body, headers: headers}} ->
+        # Try Discord JSON body first, then fall back to the standard HTTP
+        # retry-after header (used by Cloudflare 1015 bans where the body is
+        # plain text like "error code: 1015", not JSON).
         retry_after_ms =
           case Jason.decode(resp_body) do
             {:ok, %{"retry_after" => retry_after}} when is_number(retry_after) ->
               trunc(retry_after * 1000)
 
             _ ->
-              5000
+              # Cloudflare / non-JSON response — read the HTTP retry-after header (in seconds)
+              case Enum.find_value(headers, fn {k, v} ->
+                     if String.downcase(k) == "retry-after", do: v
+                   end) do
+                nil ->
+                  5000
+
+                value ->
+                  case Integer.parse(value) do
+                    {seconds, _} -> seconds * 1000
+                    :error -> 5000
+                  end
+              end
           end
 
         bucket = Enum.find_value(headers, fn {k, v} -> if String.downcase(k) == "x-ratelimit-bucket", do: v end)
