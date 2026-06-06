@@ -221,6 +221,9 @@ defmodule Prism.FanoutBroadway do
                   :network_error ->
                     {"network_error", "transient", %{}}
 
+                  :rate_limited ->
+                    {"rate_limited", "transient", %{}}
+
                   :task_crashed ->
                     {"task_crashed", "transient", %{}}
 

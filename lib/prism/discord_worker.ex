@@ -258,22 +258,35 @@ defmodule Prism.DiscordWorker do
 
     case result do
       {:error, {:rate_limited, delay_ms}} ->
-        Process.sleep(delay_ms)
+        max_rate_limit_retries = Application.get_env(:prism, :max_rate_limit_retries, 10)
 
-        retry_loop(
-          action,
-          target,
-          method,
-          url,
-          headers,
-          body,
-          webhook_id,
-          message_id,
-          batch_id,
-          parent_msg_id,
-          attempt + 1,
-          :rate_limited
-        )
+        if attempt >= max_rate_limit_retries do
+          Logger.warning(
+            "Giving up on webhook_id=#{webhook_id} after #{attempt} rate limit retries"
+          )
+
+          publish_partial(action, target, batch_id, parent_msg_id, nil, :rate_limited)
+        else
+          # Exponential backoff: use at least Discord's retry_after,
+          # but also back off based on attempt count (capped at 60s)
+          backoff_ms = max(delay_ms, min(1000 * Integer.pow(2, attempt), 60_000))
+          Process.sleep(backoff_ms)
+
+          retry_loop(
+            action,
+            target,
+            method,
+            url,
+            headers,
+            body,
+            webhook_id,
+            message_id,
+            batch_id,
+            parent_msg_id,
+            attempt + 1,
+            :rate_limited
+          )
+        end
 
       {:error, {:server_error, _}} ->
         if attempt >= 3 do
