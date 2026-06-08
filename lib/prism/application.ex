@@ -44,6 +44,8 @@ defmodule Prism.Application do
       ] ++
         redix_children ++
         [
+          %{id: Prism.PubSub, start: {Redix.PubSub, :start_link, [Keyword.put(redis_opts, :name, Prism.PubSub)]}},
+          {Prism.DelayedScheduler, []},
           Supervisor.child_spec(
             {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Fast, lane: :fast]},
             id: :fanout_broadway_fast
@@ -51,6 +53,10 @@ defmodule Prism.Application do
           Supervisor.child_spec(
             {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Slow, lane: :slow]},
             id: :fanout_broadway_slow
+          ),
+          Supervisor.child_spec(
+            {Prism.RetryBroadway, [name: Prism.RetryBroadway]},
+            id: :retry_broadway
           ),
           {Prism.MetricsLogger, []}
         ]

@@ -216,6 +216,105 @@ defmodule Prism.DiscordWorker do
     Redix.pipeline(:"my_redix_#{idx}", commands)
   end
 
+  def process_retry(payload, _polled_at, _enqueued_at) do
+    action = payload["action"]
+    target = payload["target"]
+    method = String.to_existing_atom(payload["method"])
+    url = payload["url"]
+    headers = payload["headers"]
+    body = payload["body"]
+    webhook_id = payload["webhook_id"]
+    message_id = payload["message_id"]
+    batch_id = payload["batch_id"]
+    attempt = payload["attempt"]
+    parent_msg_id = payload["parent_msg_id"]
+    reason = String.to_existing_atom(payload["reason"])
+
+    reason_str = if reason, do: " (Reason: #{reason})", else: ""
+
+    Logger.info(
+      "Retrying webhook_id=#{webhook_id} (Attempt #{attempt})#{reason_str} in Broadway pipeline..."
+    )
+
+    result = do_http_request(method, url, headers, body, webhook_id, message_id)
+
+    case result do
+      {:error, {:rate_limited, delay_ms}} ->
+        spawn_retry(
+          action,
+          target,
+          method,
+          url,
+          headers,
+          body,
+          webhook_id,
+          message_id,
+          batch_id,
+          delay_ms,
+          attempt + 1,
+          parent_msg_id,
+          :rate_limited
+        )
+
+      {:error, {:server_error, _}} ->
+        if attempt >= 3 do
+          publish_partial(action, target, batch_id, parent_msg_id, nil, :server_error)
+        else
+          backoff_ms = 2000 * attempt
+          jitter_ms = :rand.uniform(1000)
+          delay_ms = backoff_ms + jitter_ms
+
+          spawn_retry(
+            action,
+            target,
+            method,
+            url,
+            headers,
+            body,
+            webhook_id,
+            message_id,
+            batch_id,
+            delay_ms,
+            attempt + 1,
+            parent_msg_id,
+            :server_error
+          )
+        end
+
+      {:error, :network_error} ->
+        if attempt >= 5 do
+          publish_partial(action, target, batch_id, parent_msg_id, nil, :network_error)
+        else
+          backoff_ms = 1000 * attempt
+          jitter_ms = :rand.uniform(500)
+          delay_ms = backoff_ms + jitter_ms
+
+          spawn_retry(
+            action,
+            target,
+            method,
+            url,
+            headers,
+            body,
+            webhook_id,
+            message_id,
+            batch_id,
+            delay_ms,
+            attempt + 1,
+            parent_msg_id,
+            :network_error
+          )
+        end
+
+      {:error, permanent_reason} ->
+        publish_partial(action, target, batch_id, parent_msg_id, nil, permanent_reason)
+
+      {:ok, msg_id} ->
+        Logger.info("Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!")
+        publish_partial(action, target, batch_id, parent_msg_id, msg_id, nil)
+    end
+  end
+
   defp spawn_retry(
          action,
          target,
@@ -231,128 +330,22 @@ defmodule Prism.DiscordWorker do
          parent_msg_id,
          reason
        ) do
-    Task.Supervisor.start_child(
-      Prism.TaskSup,
-      fn ->
-        # Trap exits so the supervisor waits for us to finish during a shutdown
-        Process.flag(:trap_exit, true)
-        Process.sleep(delay_ms)
+    payload = %{
+      "action" => action,
+      "target" => target,
+      "method" => to_string(method),
+      "url" => url,
+      "headers" => headers,
+      "body" => body,
+      "webhook_id" => webhook_id,
+      "message_id" => message_id,
+      "batch_id" => batch_id,
+      "attempt" => attempt,
+      "parent_msg_id" => parent_msg_id,
+      "reason" => to_string(reason)
+    }
 
-        retry_loop(
-          action,
-          target,
-          method,
-          url,
-          headers,
-          body,
-          webhook_id,
-          message_id,
-          batch_id,
-          parent_msg_id,
-          attempt,
-          reason
-        )
-      end,
-      shutdown: 30_000
-    )
-  end
-
-  defp retry_loop(
-         action,
-         target,
-         method,
-         url,
-         headers,
-         body,
-         webhook_id,
-         message_id,
-         batch_id,
-         parent_msg_id,
-         attempt,
-         reason
-       ) do
-    reason_str = if reason, do: " (Reason: #{reason})", else: ""
-
-    Logger.info(
-      "Retrying webhook_id=#{webhook_id} (Attempt #{attempt})#{reason_str} in background task..."
-    )
-
-    result = do_http_request(method, url, headers, body, webhook_id, message_id)
-
-    case result do
-      {:error, {:rate_limited, delay_ms}} ->
-        Process.sleep(delay_ms)
-
-        retry_loop(
-          action,
-          target,
-          method,
-          url,
-          headers,
-          body,
-          webhook_id,
-          message_id,
-          batch_id,
-          parent_msg_id,
-          attempt + 1,
-          :rate_limited
-        )
-
-      {:error, {:server_error, _}} ->
-        if attempt >= 3 do
-          publish_partial(action, target, batch_id, parent_msg_id, nil, :server_error)
-        else
-          backoff_ms = 2000 * attempt
-          jitter_ms = :rand.uniform(1000)
-          Process.sleep(backoff_ms + jitter_ms)
-
-          retry_loop(
-            action,
-            target,
-            method,
-            url,
-            headers,
-            body,
-            webhook_id,
-            message_id,
-            batch_id,
-            parent_msg_id,
-            attempt + 1,
-            :server_error
-          )
-        end
-
-      {:error, :network_error} ->
-        if attempt >= 5 do
-          publish_partial(action, target, batch_id, parent_msg_id, nil, :network_error)
-        else
-          backoff_ms = 1000 * attempt
-          jitter_ms = :rand.uniform(500)
-          Process.sleep(backoff_ms + jitter_ms)
-
-          retry_loop(
-            action,
-            target,
-            method,
-            url,
-            headers,
-            body,
-            webhook_id,
-            message_id,
-            batch_id,
-            parent_msg_id,
-            attempt + 1,
-            :network_error
-          )
-        end
-
-      {:error, permanent_reason} ->
-        publish_partial(action, target, batch_id, parent_msg_id, nil, permanent_reason)
-
-      {:ok, msg_id} ->
-        Logger.info("Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!")
-        publish_partial(action, target, batch_id, parent_msg_id, msg_id, nil)
-    end
+    Prism.DelayedQueue.enqueue(payload, delay_ms)
   end
 
   defp publish_partial(action, target, batch_id, parent_msg_id, success_msg_id, error_reason) do
