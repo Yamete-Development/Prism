@@ -22,7 +22,7 @@ defmodule Prism.RedisClient do
     %{stream: stream, group: group, consumer_name: consumer_name, redix_pid: pid} = config
 
     cmd =
-      ~w(XREADGROUP GROUP #{group} #{consumer_name} COUNT #{demand} STREAMS #{stream} #{last_id})
+      ~w(XREADGROUP GROUP #{group} #{consumer_name} BLOCK 2000 COUNT #{demand} STREAMS #{stream} #{last_id})
 
     case command(pid, cmd) do
       {:ok, [[^stream, messages]]} -> {:ok, messages}

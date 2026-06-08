@@ -36,7 +36,7 @@ defmodule Prism.FanoutBroadway do
             consumer_name:
               "broadcast_worker_#{lane}_" <> Integer.to_string(:os.system_time(:microsecond)),
             make_stream: true,
-            receive_interval: 50
+            receive_interval: 5
           ]
         },
         rate_limiting: [
