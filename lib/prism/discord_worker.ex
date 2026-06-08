@@ -199,24 +199,30 @@ defmodule Prism.DiscordWorker do
          parent_msg_id,
          reason
        ) do
-    Task.Supervisor.start_child(Prism.TaskSup, fn ->
-      Process.sleep(delay_ms)
+    Task.Supervisor.start_child(
+      Prism.TaskSup,
+      fn ->
+        # Trap exits so the supervisor waits for us to finish during a shutdown
+        Process.flag(:trap_exit, true)
+        Process.sleep(delay_ms)
 
-      retry_loop(
-        action,
-        target,
-        method,
-        url,
-        headers,
-        body,
-        webhook_id,
-        message_id,
-        batch_id,
-        parent_msg_id,
-        attempt,
-        reason
-      )
-    end)
+        retry_loop(
+          action,
+          target,
+          method,
+          url,
+          headers,
+          body,
+          webhook_id,
+          message_id,
+          batch_id,
+          parent_msg_id,
+          attempt,
+          reason
+        )
+      end,
+      shutdown: 30_000
+    )
   end
 
   defp retry_loop(
