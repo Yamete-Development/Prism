@@ -133,25 +133,6 @@ defmodule Prism.DiscordWorker do
 
                 {:ok, nil}
 
-              {:error, :message_not_found} ->
-                spawn_retry(
-                  action,
-                  target,
-                  method,
-                  url,
-                  headers,
-                  body,
-                  webhook_id,
-                  message_id,
-                  batch_id,
-                  1000,
-                  1,
-                  parent_msg_id,
-                  :message_not_found
-                )
-
-                {:ok, nil}
-
               {:error, :network_error} ->
                 spawn_retry(
                   action,
@@ -297,27 +278,6 @@ defmodule Prism.DiscordWorker do
           )
         end
 
-      {:error, :message_not_found} ->
-        if attempt >= 3 do
-          publish_partial(action, target, batch_id, parent_msg_id, nil, :message_not_found)
-        else
-          Process.sleep(1000)
-
-          retry_loop(
-            action,
-            target,
-            method,
-            url,
-            headers,
-            body,
-            webhook_id,
-            message_id,
-            batch_id,
-            parent_msg_id,
-            attempt + 1,
-            :message_not_found
-          )
-        end
 
       {:error, :network_error} ->
         if attempt >= 5 do
@@ -367,7 +327,7 @@ defmodule Prism.DiscordWorker do
           {error_string, error_type} =
             cond do
               error_reason == :invalid_webhook -> {"invalid_webhook", "permanent"}
-              error_reason == :message_not_found -> {"message_not_found", "transient"}
+              error_reason == :message_not_found -> {"message_not_found", "permanent"}
               error_reason == :bad_request -> {"bad_request", "transient"}
               error_reason == :server_error -> {"server_error", "transient"}
               error_reason == :network_error -> {"network_error", "transient"}
@@ -492,7 +452,11 @@ defmodule Prism.DiscordWorker do
       {:ok, %{status: 404, body: resp_body}} ->
         case Jason.decode(resp_body) do
           {:ok, %{"code" => 10008}} ->
-            {:error, :message_not_found}
+            if method == :delete do
+              {:ok, nil}
+            else
+              {:error, :message_not_found}
+            end
 
           {:ok, %{"code" => code}} when code in [10003, 10015] ->
             Logger.warning(

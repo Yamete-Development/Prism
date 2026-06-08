@@ -204,7 +204,7 @@ defmodule Prism.FanoutBroadway do
                     {"invalid_webhook", "permanent", %{}}
 
                   :message_not_found ->
-                    {"message_not_found", "transient", %{}}
+                    {"message_not_found", "permanent", %{}}
 
                   :bad_request ->
                     {"bad_request", "transient", %{}}
