@@ -179,6 +179,25 @@ defmodule Prism.DiscordWorker do
 
                 {:ok, nil}
 
+              {:error, :message_not_found_transient} ->
+                spawn_retry(
+                  action,
+                  target,
+                  method,
+                  url,
+                  headers,
+                  body,
+                  webhook_id,
+                  message_id,
+                  batch_id,
+                  1000,
+                  1,
+                  parent_msg_id,
+                  :message_not_found_transient
+                )
+
+                {:ok, nil}
+
               other ->
                 other
             end
@@ -303,6 +322,36 @@ defmodule Prism.DiscordWorker do
             attempt + 1,
             parent_msg_id,
             :network_error
+          )
+        end
+
+      {:error, :message_not_found_transient} ->
+        if attempt >= 5 do
+          if method == :delete do
+            Logger.info("Webhook_id=#{webhook_id} still 10008 on attempt #{attempt} for delete, assuming deleted.")
+            publish_partial(action, target, batch_id, parent_msg_id, nil, nil)
+          else
+            publish_partial(action, target, batch_id, parent_msg_id, nil, :message_not_found)
+          end
+        else
+          backoff_ms = 1000 * attempt
+          jitter_ms = :rand.uniform(500)
+          delay_ms = backoff_ms + jitter_ms
+
+          spawn_retry(
+            action,
+            target,
+            method,
+            url,
+            headers,
+            body,
+            webhook_id,
+            message_id,
+            batch_id,
+            delay_ms,
+            attempt + 1,
+            parent_msg_id,
+            :message_not_found_transient
           )
         end
 
@@ -528,11 +577,8 @@ defmodule Prism.DiscordWorker do
       {:ok, %{status: 404, body: resp_body}} ->
         case Jason.decode(resp_body) do
           {:ok, %{"code" => 10008}} ->
-            if method == :delete do
-              {:ok, nil}
-            else
-              {:error, :message_not_found}
-            end
+            Logger.info("Webhook_id=#{webhook_id} returned 10008. Treating as transient to handle eventual consistency.")
+            {:error, :message_not_found_transient}
 
           {:ok, %{"code" => code}} when code in [10003, 10015] ->
             Logger.warning(
