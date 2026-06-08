@@ -342,9 +342,4 @@ defmodule Prism.FanoutBroadway do
   defp reply_index_enabled? do
     Application.get_env(:prism, :reply_index_enabled, true)
   end
-
-  defp redix_command(command) do
-    idx = :erlang.phash2(System.unique_integer(), 5)
-    Redix.command(:"my_redix_#{idx}", command)
-  end
 end

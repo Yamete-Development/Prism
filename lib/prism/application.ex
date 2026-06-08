@@ -38,7 +38,7 @@ defmodule Prism.Application do
     children =
       [
         {Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]},
-        {Finch, name: DiscordFinch, pools: %{"https://discord.com" => [size: 1000]}},
+        {Finch, name: DiscordFinch, pools: %{"https://discord.com" => [protocol: :http2, count: 20]}},
         {Task.Supervisor, name: Prism.TaskSup},
         {Prism.MetricsAPI, []}
       ] ++
