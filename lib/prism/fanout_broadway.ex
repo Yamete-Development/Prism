@@ -81,6 +81,9 @@ defmodule Prism.FanoutBroadway do
         discord_payload = Map.get(payload, "payload", %{})
         parent_message_id = Map.get(payload, "message_id")
         metadata = Map.get(payload, "metadata", %{})
+        hub_id = Map.get(payload, "hub_id")
+
+        shard_index = Map.get(payload, "shard_index", 0)
 
         process_batch(
           action,
@@ -90,7 +93,9 @@ defmodule Prism.FanoutBroadway do
           polled_at,
           enqueued_at,
           parent_message_id,
-          metadata
+          metadata,
+          hub_id,
+          shard_index
         )
 
         message
@@ -121,7 +126,9 @@ defmodule Prism.FanoutBroadway do
          polled_at,
          enqueued_at,
          parent_message_id,
-         payload_metadata
+         payload_metadata,
+         root_hub_id,
+         shard_index
        ) do
     include_parent_message_id =
       Application.get_env(:prism, :callback_include_parent_message_id, true)
@@ -289,6 +296,41 @@ defmodule Prism.FanoutBroadway do
       }
 
       event_data = Map.merge(event_data, payload_metadata || %{})
+
+      sse_enabled = Application.get_env(:prism, :redis_sse_enabled, false)
+      
+      Logger.debug("SSE Evaluation -> enabled: #{sse_enabled}, action: #{action}, targets: #{length(targets)}, shard_index: #{shard_index}")
+
+      # Publish to Redis for web UI SSE streams if enabled
+      if sse_enabled and action == "execute" and length(targets) > 0 and shard_index == 0 do
+        first_target = hd(targets)
+        # Use root_hub_id if provided by the Python bot payload, else fallback to the target's hub_id
+        hub_id = root_hub_id || Map.get(first_target, "hub_id")
+        
+        Logger.debug("SSE Extracted hub_id: #{inspect(hub_id)}")
+        
+        if hub_id do
+          safe_metadata = payload_metadata || %{}
+          stream_payload = %{
+            content: Map.get(discord_payload, "content", ""),
+            authorId: Map.get(safe_metadata, "author_id", ""),
+            guildId: Map.get(safe_metadata, "guild_id", ""),
+            authorName: Map.get(discord_payload, "username", "Unknown User"),
+            guildName: Map.get(safe_metadata, "guild_name", "Unknown Server"),
+            badges: Map.get(safe_metadata, "badges", []),
+            createdAt: DateTime.utc_now() |> DateTime.to_iso8601(),
+            id: parent_message_id || batch_id
+          } |> Jason.encode!()
+          
+          sse_topic_prefix = Application.get_env(:prism, :redis_sse_topic_prefix, "dashboard:stream:hub:")
+          idx = :erlang.phash2(System.unique_integer(), 5)
+          
+          case Redix.command(:"my_redix_#{idx}", ["PUBLISH", "#{sse_topic_prefix}#{hub_id}", stream_payload]) do
+            {:ok, _} -> Logger.debug("SSE Publish Success to #{sse_topic_prefix}#{hub_id}")
+            {:error, reason} -> Logger.error("SSE Publish Failed: #{inspect(reason)}")
+          end
+        end
+      end
 
       Enum.each(:pg.get_members(:prism_events), fn pid ->
         send(pid, {:batch_processed, event_data})

@@ -44,6 +44,8 @@ Configuration is handled dynamically via environment variables. See the provided
 | `PRISM_REPLY_INDEX_ENABLED` | Persist the durable Redis reply index for execute callbacks. | `true` |
 | `PRISM_REPLY_INDEX_PREFIX` | Redis key prefix used for reply delivery state. | `prism:delivery` |
 | `PRISM_REPLY_INDEX_TTL_SECONDS` | TTL for reply delivery index keys. | `604800` |
+| `PRISM_REDIS_SSE_ENABLED` | Set to `true` to publish payload to Redis Pub/Sub for SSE streaming. | `false` |
+| `PRISM_REDIS_SSE_TOPIC_PREFIX` | Prefix for the Pub/Sub topic used by SSE events. | `dashboard:stream:hub:` |
 
 ## Getting Started
 

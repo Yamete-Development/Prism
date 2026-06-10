@@ -1,7 +1,7 @@
 import Config
 
 parse_bool = fn value ->
-  String.downcase(to_string(value || "true")) in ["1", "true", "yes", "on"]
+  String.trim(String.downcase(to_string(value || "true"))) in ["1", "true", "yes", "on"]
 end
 
 redis_host = System.get_env("REDIS_HOST") || "localhost"
@@ -34,4 +34,6 @@ config :prism,
   reply_index_enabled: parse_bool.(System.get_env("PRISM_REPLY_INDEX_ENABLED")),
   reply_index_prefix: System.get_env("PRISM_REPLY_INDEX_PREFIX") || "prism:delivery",
   reply_index_ttl_seconds:
-    String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800")
+    String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800"),
+  redis_sse_enabled: parse_bool.(System.get_env("PRISM_REDIS_SSE_ENABLED") || "false"),
+  redis_sse_topic_prefix: System.get_env("PRISM_REDIS_SSE_TOPIC_PREFIX") || "dashboard:stream:hub:"
