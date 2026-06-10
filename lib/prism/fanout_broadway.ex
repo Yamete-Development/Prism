@@ -319,7 +319,8 @@ defmodule Prism.FanoutBroadway do
             guildName: Map.get(safe_metadata, "guild_name", "Unknown Server"),
             badges: Map.get(safe_metadata, "badges", []),
             createdAt: DateTime.utc_now() |> DateTime.to_iso8601(),
-            id: parent_message_id || batch_id
+            id: parent_message_id || batch_id,
+            authorAvatarUrl: Map.get(discord_payload, "avatar_url", nil)
           } |> Jason.encode!()
           
           sse_topic_prefix = Application.get_env(:prism, :redis_sse_topic_prefix, "dashboard:stream:hub:")
