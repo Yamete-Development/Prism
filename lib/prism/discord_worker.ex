@@ -240,7 +240,7 @@ defmodule Prism.DiscordWorker do
     target = payload["target"]
     method = String.to_existing_atom(payload["method"])
     url = payload["url"]
-    headers = payload["headers"]
+    headers = payload["headers"] |> Enum.to_list()
     body = payload["body"]
     webhook_id = payload["webhook_id"]
     message_id = payload["message_id"]
@@ -384,8 +384,8 @@ defmodule Prism.DiscordWorker do
       "target" => target,
       "method" => to_string(method),
       "url" => url,
-      "headers" => headers,
-      "body" => body,
+      "headers" => Enum.into(headers, %{}),
+      "body" => IO.iodata_to_binary(body),
       "webhook_id" => webhook_id,
       "message_id" => message_id,
       "batch_id" => batch_id,
