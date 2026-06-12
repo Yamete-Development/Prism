@@ -42,11 +42,12 @@ defmodule Prism.DiscordWorker do
 
       checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
       rl_key = "rl:#{webhook_id}"
+      global_rl_key = "rl:global"
 
       {cached_result, rl_ttl} =
         if batch_id do
-          case redix_pipeline([["GET", checkpoint_key], ["PTTL", rl_key]]) do
-            {:ok, [get_res, pttl_res]} ->
+          case redix_pipeline([["GET", checkpoint_key], ["PTTL", rl_key], ["PTTL", global_rl_key]]) do
+            {:ok, [get_res, pttl_res, global_pttl_res]} ->
               cached =
                 case get_res do
                   "done" -> {:ok, nil}
@@ -60,28 +61,80 @@ defmodule Prism.DiscordWorker do
                   _ -> 0
                 end
 
-              {cached, ttl}
+              global_ttl =
+                case global_pttl_res do
+                  ttl when is_integer(ttl) and ttl > 0 -> ttl
+                  _ -> 0
+                end
+
+              {cached, max(ttl, global_ttl)}
 
             _ ->
               {nil, 0}
           end
         else
-          case redix_command(["PTTL", rl_key]) do
-            {:ok, ttl} when is_integer(ttl) and ttl > 0 -> {nil, ttl}
-            _ -> {nil, 0}
+          case redix_pipeline([["PTTL", rl_key], ["PTTL", global_rl_key]]) do
+            {:ok, [pttl_res, global_pttl_res]} ->
+              ttl =
+                case pttl_res do
+                  ttl when is_integer(ttl) and ttl > 0 -> ttl
+                  _ -> 0
+                end
+
+              global_ttl =
+                case global_pttl_res do
+                  ttl when is_integer(ttl) and ttl > 0 -> ttl
+                  _ -> 0
+                end
+
+              {nil, max(ttl, global_ttl)}
+
+            _ ->
+              {nil, 0}
           end
         end
 
       if cached_result do
         cached_result
       else
-        if rl_ttl > 0 do
+        if rl_ttl > 10000 do
           Logger.debug(
-            "Pre-flight rate limit check triggered for webhook_id=#{webhook_id}. Sleeping for #{rl_ttl}ms."
+            "Pre-flight rate limit check triggered for webhook_id=#{webhook_id} with long TTL=#{rl_ttl}ms. Rescheduling immediately."
           )
 
-          Process.sleep(rl_ttl)
-        end
+          parent_msg_id = if action == "execute", do: parent_message_id, else: nil
+
+          case build_request(action, base_url, message_id, thread_id) do
+            {:ok, method, url} ->
+              spawn_retry(
+                action,
+                target,
+                method,
+                url,
+                headers,
+                body,
+                webhook_id,
+                message_id,
+                batch_id,
+                rl_ttl,
+                1,
+                parent_msg_id,
+                :rate_limited
+              )
+
+              {:ok, nil}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        else
+          if rl_ttl > 0 do
+            Logger.debug(
+              "Pre-flight rate limit check triggered for webhook_id=#{webhook_id}. Sleeping for #{rl_ttl}ms."
+            )
+
+            Process.sleep(rl_ttl)
+          end
 
         case build_request(action, base_url, message_id, thread_id) do
           {:ok, method, url} ->
@@ -206,6 +259,7 @@ defmodule Prism.DiscordWorker do
             {:error, reason}
         end
       end
+    end
     else
       Logger.warning("Invalid webhook data. Skipping.")
       {:error, :invalid_webhook}
@@ -571,6 +625,16 @@ defmodule Prism.DiscordWorker do
         Logger.info(
           "Rate limited on webhook_id=#{webhook_id} - Delay: #{retry_after_ms}ms | Scope: #{scope || "unknown"} | Bucket: #{bucket || "unknown"} | Global: #{global || "false"}"
         )
+
+        capped_retry_after_ms = min(retry_after_ms, 3_600_000)
+        if capped_retry_after_ms > 0 do
+          if global == "true" do
+            Logger.debug("Caching global rate limit for #{capped_retry_after_ms}ms")
+            redix_command(["PSETEX", "rl:global", Integer.to_string(capped_retry_after_ms), "1"])
+          else
+            redix_command(["PSETEX", "rl:#{webhook_id}", Integer.to_string(capped_retry_after_ms), "1"])
+          end
+        end
 
         {:error, {:rate_limited, retry_after_ms}}
 
