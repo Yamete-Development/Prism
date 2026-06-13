@@ -553,7 +553,34 @@ defmodule Prism.DiscordWorker do
     {:error, :invalid_action}
   end
 
-  defp do_http_request(method, url, headers, body, webhook_id, _message_id) do
+  defp do_http_request(method, url, headers, body, webhook_id, message_id) do
+    OpenTelemetry.Tracer.with_span "prism.worker.http_request" do
+      OpenTelemetry.Tracer.set_attributes([
+        {:http_method, to_string(method)},
+        {:webhook_id, webhook_id}
+      ])
+
+      result = do_http_request_internal(method, url, headers, body, webhook_id, message_id)
+
+      case result do
+        {:ok, _} ->
+          OpenTelemetry.Tracer.set_attribute(:http_success, true)
+
+        {:error, {:rate_limited, _}} ->
+          OpenTelemetry.Tracer.set_attribute(:error_type, "rate_limited")
+
+        {:error, {:server_error, _}} ->
+          OpenTelemetry.Tracer.set_attribute(:error_type, "server_error")
+
+        {:error, reason} ->
+          OpenTelemetry.Tracer.set_attribute(:error_type, inspect(reason))
+      end
+
+      result
+    end
+  end
+
+  defp do_http_request_internal(method, url, headers, body, webhook_id, _message_id) do
     case Finch.build(method, url, headers, body)
          |> Finch.request(DiscordFinch, receive_timeout: 30_000, pool_timeout: 30_000) do
       {:ok, %{status: status, body: resp_body, headers: headers}} when status in 200..299 ->

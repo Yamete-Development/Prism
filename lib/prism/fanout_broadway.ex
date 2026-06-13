@@ -160,11 +160,16 @@ defmodule Prism.FanoutBroadway do
     batch_max_concurrency = Application.get_env(:prism, :batch_max_concurrency, 80)
 
     try do
+      # Capture current context to propagate into child processes
+      ctx = OpenTelemetry.Ctx.get_current()
+
       # Process targets with bounded concurrency and wait for completion
       results =
         Task.async_stream(
           targets,
           fn target ->
+            OpenTelemetry.Ctx.attach(ctx)
+
             Prism.DiscordWorker.process_target(
               action,
               target,
