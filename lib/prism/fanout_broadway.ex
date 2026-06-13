@@ -222,6 +222,9 @@ defmodule Prism.FanoutBroadway do
                   :invalid_action ->
                     {"invalid_action", "permanent", %{}}
 
+                  {:permanent, detail} ->
+                    {"permanent_error", "permanent", %{"detail" => inspect(detail)}}
+
                   {:server_error, _} ->
                     {"server_error", "transient", %{}}
 

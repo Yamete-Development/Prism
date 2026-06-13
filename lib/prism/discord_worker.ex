@@ -38,7 +38,7 @@ defmodule Prism.DiscordWorker do
         end
 
       headers = [{"Content-Type", "application/json"}]
-      body = if action == "delete", do: "", else: Jason.encode_to_iodata!(content)
+      body = if action == "delete", do: nil, else: Jason.encode_to_iodata!(content)
 
       checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
       rl_key = "rl:#{webhook_id}"
