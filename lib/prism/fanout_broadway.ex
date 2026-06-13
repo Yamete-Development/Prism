@@ -85,7 +85,7 @@ defmodule Prism.FanoutBroadway do
         hub_id = Map.get(payload, "hub_id")
 
         shard_index = Map.get(payload, "shard_index", 0)
-        trace_headers = Map.get(payload, "trace_headers", %{})
+        trace_headers = Map.get(payload, "trace_headers", %{}) |> Enum.to_list()
 
         ctx = :otel_propagator_text_map.extract(trace_headers)
         OpenTelemetry.Ctx.attach(ctx)
