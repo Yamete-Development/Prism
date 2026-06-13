@@ -505,7 +505,7 @@ defmodule Prism.DiscordWorker do
     end
   end
 
-  defp build_request("execute", base_url, _msg_id, thread_id) do
+  defp build_request(action, base_url, _msg_id, thread_id) when action in ["execute", "lobby_execute", "lobby_relay"] do
     url = base_url <> "?wait=true&with_components=true"
     url = if is_binary(thread_id), do: url <> "&thread_id=#{thread_id}", else: url
     {:ok, :post, url}
