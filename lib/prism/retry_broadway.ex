@@ -73,7 +73,7 @@ defmodule Prism.RetryBroadway do
         # Let's inspect what we pushed. DiscordWorker pushed a payload containing:
         # action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt, reason
         # We need to process it using DiscordWorker.
-        
+
         # It's better to pass it back to DiscordWorker's `process_retry` which we'll define.
         Prism.DiscordWorker.process_retry(payload, polled_at, enqueued_at)
         message

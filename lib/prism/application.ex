@@ -38,13 +38,17 @@ defmodule Prism.Application do
     children =
       [
         {Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]},
-        {Finch, name: DiscordFinch, pools: %{"https://discord.com" => [protocols: [:http2], count: 20]}},
+        {Finch,
+         name: DiscordFinch, pools: %{"https://discord.com" => [protocols: [:http2], count: 20]}},
         {Task.Supervisor, name: Prism.TaskSup},
         {Prism.MetricsAPI, []}
       ] ++
         redix_children ++
         [
-          %{id: Prism.PubSub, start: {Redix.PubSub, :start_link, [Keyword.put(redis_opts, :name, Prism.PubSub)]}},
+          %{
+            id: Prism.PubSub,
+            start: {Redix.PubSub, :start_link, [Keyword.put(redis_opts, :name, Prism.PubSub)]}
+          },
           {Prism.DelayedScheduler, []},
           Supervisor.child_spec(
             {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Fast, lane: :fast]},

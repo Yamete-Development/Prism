@@ -1,5 +1,6 @@
 defmodule Prism.DiscordWorker do
   require Logger
+  require OpenTelemetry.Tracer
 
   @doc """
   Sends the webhook content to a guild's discord webhook URL with retry logic.
@@ -46,7 +47,11 @@ defmodule Prism.DiscordWorker do
 
       {cached_result, rl_ttl} =
         if batch_id do
-          case redix_pipeline([["GET", checkpoint_key], ["PTTL", rl_key], ["PTTL", global_rl_key]]) do
+          case redix_pipeline([
+                 ["GET", checkpoint_key],
+                 ["PTTL", rl_key],
+                 ["PTTL", global_rl_key]
+               ]) do
             {:ok, [get_res, pttl_res, global_pttl_res]} ->
               cached =
                 case get_res do
@@ -94,87 +99,25 @@ defmodule Prism.DiscordWorker do
           end
         end
 
-      if cached_result do
-        cached_result
-      else
-        if rl_ttl > 10000 do
-          Logger.debug(
-            "Pre-flight rate limit check triggered for webhook_id=#{webhook_id} with long TTL=#{rl_ttl}ms. Rescheduling immediately."
-          )
+      OpenTelemetry.Tracer.with_span "prism.worker.process_target" do
+        OpenTelemetry.Tracer.set_attributes([
+          {:action, action},
+          {:webhook_id, webhook_id},
+          {:batch_id, batch_id}
+        ])
 
-          parent_msg_id = if action == "execute", do: parent_message_id, else: nil
-
-          case build_request(action, base_url, message_id, thread_id) do
-            {:ok, method, url} ->
-              spawn_retry(
-                action,
-                target,
-                method,
-                url,
-                headers,
-                body,
-                webhook_id,
-                message_id,
-                batch_id,
-                rl_ttl,
-                1,
-                parent_msg_id,
-                :rate_limited
-              )
-
-              {:ok, nil}
-
-            {:error, reason} ->
-              {:error, reason}
-          end
+        if cached_result do
+          cached_result
         else
-          if rl_ttl > 0 do
+          if rl_ttl > 10000 do
             Logger.debug(
-              "Pre-flight rate limit check triggered for webhook_id=#{webhook_id}. Sleeping for #{rl_ttl}ms."
+              "Pre-flight rate limit check triggered for webhook_id=#{webhook_id} with long TTL=#{rl_ttl}ms. Rescheduling immediately."
             )
 
-            Process.sleep(rl_ttl)
-          end
-
-        case build_request(action, base_url, message_id, thread_id) do
-          {:ok, method, url} ->
-            req_start = System.monotonic_time(:millisecond)
-            req_start_wall = :os.system_time(:millisecond)
-            result = do_http_request(method, url, headers, body, webhook_id, message_id)
-            req_end = System.monotonic_time(:millisecond)
-            req_end_wall = :os.system_time(:millisecond)
-
-            if Code.ensure_loaded?(Mix) and Mix.env() == :dev do
-              queue_time = if enqueued_at, do: polled_at - enqueued_at, else: 0
-              prep_time = if polled_at, do: req_start_wall - polled_at, else: 0
-              http_time = req_end - req_start
-              total_time = if enqueued_at, do: req_end_wall - enqueued_at, else: 0
-
-              Logger.info(
-                "[Timing] Webhook #{webhook_id} (batch #{batch_id || "N/A"}) - Queue: #{queue_time}ms | Prep: #{prep_time}ms | Discord HTTP: #{http_time}ms | Total End-to-End: #{total_time}ms"
-              )
-            end
-
-            # Cache success
-            if batch_id do
-              case result do
-                {:ok, msg_id} when is_binary(msg_id) ->
-                  redix_command(["SETEX", checkpoint_key, "86400", msg_id])
-
-                {:ok, nil} ->
-                  redix_command(["SETEX", checkpoint_key, "86400", "done"])
-
-                _ ->
-                  :ok
-              end
-            end
-
-            # Handle retries if needed
-            # The parent_message_id is now passed down from Broadway in 'message_id' param if it's the execute action
             parent_msg_id = if action == "execute", do: parent_message_id, else: nil
 
-            case result do
-              {:error, {:rate_limited, delay_ms}} ->
+            case build_request(action, base_url, message_id, thread_id) do
+              {:ok, method, url} ->
                 spawn_retry(
                   action,
                   target,
@@ -185,81 +128,160 @@ defmodule Prism.DiscordWorker do
                   webhook_id,
                   message_id,
                   batch_id,
-                  delay_ms,
+                  rl_ttl,
                   1,
                   parent_msg_id,
                   :rate_limited
                 )
 
-                # Unblock batch
                 {:ok, nil}
 
-              {:error, {:server_error, _}} ->
-                spawn_retry(
-                  action,
-                  target,
-                  method,
-                  url,
-                  headers,
-                  body,
-                  webhook_id,
-                  message_id,
-                  batch_id,
-                  2000,
-                  1,
-                  parent_msg_id,
-                  :server_error
-                )
+              {:error, reason} ->
+                {:error, reason}
+            end
+          else
+            if rl_ttl > 0 do
+              Logger.debug(
+                "Pre-flight rate limit check triggered for webhook_id=#{webhook_id}. Sleeping for #{rl_ttl}ms."
+              )
 
-                {:ok, nil}
-
-              {:error, :network_error} ->
-                spawn_retry(
-                  action,
-                  target,
-                  method,
-                  url,
-                  headers,
-                  body,
-                  webhook_id,
-                  message_id,
-                  batch_id,
-                  1000,
-                  1,
-                  parent_msg_id,
-                  :network_error
-                )
-
-                {:ok, nil}
-
-              {:error, :message_not_found_transient} ->
-                spawn_retry(
-                  action,
-                  target,
-                  method,
-                  url,
-                  headers,
-                  body,
-                  webhook_id,
-                  message_id,
-                  batch_id,
-                  1000,
-                  1,
-                  parent_msg_id,
-                  :message_not_found_transient
-                )
-
-                {:ok, nil}
-
-              other ->
-                other
+              Process.sleep(rl_ttl)
             end
 
-          {:error, reason} ->
-            {:error, reason}
+            case build_request(action, base_url, message_id, thread_id) do
+              {:ok, method, url} ->
+                req_start = System.monotonic_time(:millisecond)
+                req_start_wall = :os.system_time(:millisecond)
+                result = do_http_request(method, url, headers, body, webhook_id, message_id)
+                req_end = System.monotonic_time(:millisecond)
+                req_end_wall = :os.system_time(:millisecond)
+
+                if Code.ensure_loaded?(Mix) and Mix.env() == :dev do
+                  queue_time = if enqueued_at, do: polled_at - enqueued_at, else: 0
+                  prep_time = if polled_at, do: req_start_wall - polled_at, else: 0
+                  http_time = req_end - req_start
+                  total_time = if enqueued_at, do: req_end_wall - enqueued_at, else: 0
+
+                  Logger.info(
+                    "[Timing] Webhook #{webhook_id} (batch #{batch_id || "N/A"}) - Queue: #{queue_time}ms | Prep: #{prep_time}ms | Discord HTTP: #{http_time}ms | Total End-to-End: #{total_time}ms"
+                  )
+                end
+
+                # Cache success
+                if batch_id do
+                  case result do
+                    {:ok, msg_id} when is_binary(msg_id) ->
+                      redix_command(["SETEX", checkpoint_key, "86400", msg_id])
+
+                    {:ok, nil} ->
+                      redix_command(["SETEX", checkpoint_key, "86400", "done"])
+
+                    _ ->
+                      :ok
+                  end
+                end
+
+                # Handle retries if needed
+                # The parent_message_id is now passed down from Broadway in 'message_id' param if it's the execute action
+                parent_msg_id = if action == "execute", do: parent_message_id, else: nil
+
+                case result do
+                  {:error, {:rate_limited, delay_ms}} ->
+                    OpenTelemetry.Tracer.set_attribute(:error_type, "rate_limited")
+
+                    spawn_retry(
+                      action,
+                      target,
+                      method,
+                      url,
+                      headers,
+                      body,
+                      webhook_id,
+                      message_id,
+                      batch_id,
+                      delay_ms,
+                      1,
+                      parent_msg_id,
+                      :rate_limited
+                    )
+
+                    # Unblock batch
+                    {:ok, nil}
+
+                  {:error, {:server_error, _}} ->
+                    OpenTelemetry.Tracer.set_attribute(:error_type, "server_error")
+
+                    spawn_retry(
+                      action,
+                      target,
+                      method,
+                      url,
+                      headers,
+                      body,
+                      webhook_id,
+                      message_id,
+                      batch_id,
+                      2000,
+                      1,
+                      parent_msg_id,
+                      :server_error
+                    )
+
+                    {:ok, nil}
+
+                  {:error, :network_error} ->
+                    OpenTelemetry.Tracer.set_attribute(:error_type, "network_error")
+
+                    spawn_retry(
+                      action,
+                      target,
+                      method,
+                      url,
+                      headers,
+                      body,
+                      webhook_id,
+                      message_id,
+                      batch_id,
+                      1000,
+                      1,
+                      parent_msg_id,
+                      :network_error
+                    )
+
+                    {:ok, nil}
+
+                  {:error, :message_not_found_transient} ->
+                    OpenTelemetry.Tracer.set_attribute(:error_type, "message_not_found_transient")
+
+                    spawn_retry(
+                      action,
+                      target,
+                      method,
+                      url,
+                      headers,
+                      body,
+                      webhook_id,
+                      message_id,
+                      batch_id,
+                      1000,
+                      1,
+                      parent_msg_id,
+                      :message_not_found_transient
+                    )
+
+                    {:ok, nil}
+
+                  other ->
+                    other
+                end
+
+              {:error, reason} ->
+                OpenTelemetry.Tracer.set_attribute(:error_type, inspect(reason))
+                {:error, reason}
+            end
+          end
         end
       end
-    end
     else
       Logger.warning("Invalid webhook data. Skipping.")
       {:error, :invalid_webhook}
@@ -382,7 +404,10 @@ defmodule Prism.DiscordWorker do
       {:error, :message_not_found_transient} ->
         if attempt >= 5 do
           if method == :delete do
-            Logger.info("Webhook_id=#{webhook_id} still 10008 on attempt #{attempt} for delete, assuming deleted.")
+            Logger.info(
+              "Webhook_id=#{webhook_id} still 10008 on attempt #{attempt} for delete, assuming deleted."
+            )
+
             publish_partial(action, target, batch_id, parent_msg_id, nil, nil)
           else
             publish_partial(action, target, batch_id, parent_msg_id, nil, :message_not_found)
@@ -627,12 +652,18 @@ defmodule Prism.DiscordWorker do
         )
 
         capped_retry_after_ms = min(retry_after_ms, 3_600_000)
+
         if capped_retry_after_ms > 0 do
           if global == "true" do
             Logger.debug("Caching global rate limit for #{capped_retry_after_ms}ms")
             redix_command(["PSETEX", "rl:global", Integer.to_string(capped_retry_after_ms), "1"])
           else
-            redix_command(["PSETEX", "rl:#{webhook_id}", Integer.to_string(capped_retry_after_ms), "1"])
+            redix_command([
+              "PSETEX",
+              "rl:#{webhook_id}",
+              Integer.to_string(capped_retry_after_ms),
+              "1"
+            ])
           end
         end
 
@@ -641,7 +672,10 @@ defmodule Prism.DiscordWorker do
       {:ok, %{status: 404, body: resp_body}} ->
         case Jason.decode(resp_body) do
           {:ok, %{"code" => 10008}} ->
-            Logger.info("Webhook_id=#{webhook_id} returned 10008. Treating as transient to handle eventual consistency.")
+            Logger.info(
+              "Webhook_id=#{webhook_id} returned 10008. Treating as transient to handle eventual consistency."
+            )
+
             {:error, :message_not_found_transient}
 
           {:ok, %{"code" => code}} when code in [10003, 10015] ->

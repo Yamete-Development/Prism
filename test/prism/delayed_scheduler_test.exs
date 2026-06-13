@@ -35,7 +35,7 @@ defmodule Prism.DelayedSchedulerTest do
 
   test "scheduler wakes up early when a PubSub event arrives", %{redix_conn: redix_conn, pid: pid} do
     now = :os.system_time(:millisecond)
-    
+
     Redix.command!(redix_conn, ["ZADD", @zset_key, to_string(now + 5000), "{\"id\": 2}"])
     send(pid, :tick)
 

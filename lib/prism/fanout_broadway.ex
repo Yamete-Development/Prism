@@ -2,6 +2,7 @@ defmodule Prism.FanoutBroadway do
   use Broadway
 
   require Logger
+  require OpenTelemetry.Tracer
 
   alias Broadway.Message
 
@@ -84,19 +85,32 @@ defmodule Prism.FanoutBroadway do
         hub_id = Map.get(payload, "hub_id")
 
         shard_index = Map.get(payload, "shard_index", 0)
+        trace_headers = Map.get(payload, "trace_headers", %{})
 
-        process_batch(
-          action,
-          batch_id,
-          discord_payload,
-          targets,
-          polled_at,
-          enqueued_at,
-          parent_message_id,
-          metadata,
-          hub_id,
-          shard_index
-        )
+        ctx = :otel_propagator_text_map.extract(trace_headers)
+        OpenTelemetry.Ctx.attach(ctx)
+
+        OpenTelemetry.Tracer.with_span "prism.worker.process_batch" do
+          OpenTelemetry.Tracer.set_attributes([
+            {:batch_id, batch_id},
+            {:action, action},
+            {:target_count, length(targets)},
+            {:shard_index, shard_index}
+          ])
+
+          process_batch(
+            action,
+            batch_id,
+            discord_payload,
+            targets,
+            polled_at,
+            enqueued_at,
+            parent_message_id,
+            metadata,
+            hub_id,
+            shard_index
+          )
+        end
 
         message
 
@@ -301,35 +315,47 @@ defmodule Prism.FanoutBroadway do
       event_data = Map.merge(event_data, payload_metadata || %{})
 
       sse_enabled = Application.get_env(:prism, :redis_sse_enabled, false)
-      
-      Logger.debug("SSE Evaluation -> enabled: #{sse_enabled}, action: #{action}, targets: #{length(targets)}, shard_index: #{shard_index}")
+
+      Logger.debug(
+        "SSE Evaluation -> enabled: #{sse_enabled}, action: #{action}, targets: #{length(targets)}, shard_index: #{shard_index}"
+      )
 
       # Publish to Redis for web UI SSE streams if enabled
       if sse_enabled and action == "execute" and length(targets) > 0 and shard_index == 0 do
         first_target = hd(targets)
+
         # Use root_hub_id if provided by the Python bot payload, else fallback to the target's hub_id
         hub_id = root_hub_id || Map.get(first_target, "hub_id")
-        
+
         Logger.debug("SSE Extracted hub_id: #{inspect(hub_id)}")
-        
+
         if hub_id do
           safe_metadata = payload_metadata || %{}
-          stream_payload = %{
-            content: Map.get(discord_payload, "content", ""),
-            authorId: Map.get(safe_metadata, "author_id", ""),
-            guildId: Map.get(safe_metadata, "guild_id", ""),
-            authorName: Map.get(discord_payload, "username", "Unknown User"),
-            guildName: Map.get(safe_metadata, "guild_name", "Unknown Server"),
-            badges: Map.get(safe_metadata, "badges", []),
-            createdAt: DateTime.utc_now() |> DateTime.to_iso8601(),
-            id: parent_message_id || batch_id,
-            authorAvatarUrl: Map.get(discord_payload, "avatar_url", nil)
-          } |> Jason.encode!()
-          
-          sse_topic_prefix = Application.get_env(:prism, :redis_sse_topic_prefix, "dashboard:stream:hub:")
+
+          stream_payload =
+            %{
+              content: Map.get(discord_payload, "content", ""),
+              authorId: Map.get(safe_metadata, "author_id", ""),
+              guildId: Map.get(safe_metadata, "guild_id", ""),
+              authorName: Map.get(discord_payload, "username", "Unknown User"),
+              guildName: Map.get(safe_metadata, "guild_name", "Unknown Server"),
+              badges: Map.get(safe_metadata, "badges", []),
+              createdAt: DateTime.utc_now() |> DateTime.to_iso8601(),
+              id: parent_message_id || batch_id,
+              authorAvatarUrl: Map.get(discord_payload, "avatar_url", nil)
+            }
+            |> Jason.encode!()
+
+          sse_topic_prefix =
+            Application.get_env(:prism, :redis_sse_topic_prefix, "dashboard:stream:hub:")
+
           idx = :erlang.phash2(System.unique_integer(), 5)
-          
-          case Redix.command(:"my_redix_#{idx}", ["PUBLISH", "#{sse_topic_prefix}#{hub_id}", stream_payload]) do
+
+          case Redix.command(:"my_redix_#{idx}", [
+                 "PUBLISH",
+                 "#{sse_topic_prefix}#{hub_id}",
+                 stream_payload
+               ]) do
             {:ok, _} -> Logger.debug("SSE Publish Success to #{sse_topic_prefix}#{hub_id}")
             {:error, reason} -> Logger.error("SSE Publish Failed: #{inspect(reason)}")
           end

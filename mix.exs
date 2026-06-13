@@ -27,7 +27,10 @@ defmodule Prism.MixProject do
       {:finch, "~> 0.18"},
       {:jason, "~> 1.4"},
       {:redix, "~> 1.4"},
-      {:libcluster, "~> 3.4"}
+      {:libcluster, "~> 3.4"},
+      {:opentelemetry_api, "~> 1.3"},
+      {:opentelemetry, "~> 1.4"},
+      {:opentelemetry_exporter, "~> 1.6"}
     ]
   end
 end

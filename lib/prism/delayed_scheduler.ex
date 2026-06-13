@@ -38,7 +38,7 @@ defmodule Prism.DelayedScheduler do
       {:ok, next_score} ->
         # Schedule the next tick based on the earliest item
         delay_ms = max(next_score - :os.system_time(:millisecond), 0)
-        
+
         timer_ref = Process.send_after(self(), :tick, delay_ms)
         {:noreply, %{state | timer_ref: timer_ref}}
 
@@ -50,17 +50,23 @@ defmodule Prism.DelayedScheduler do
   end
 
   @impl true
-  def handle_info({:redix_pubsub, _pubsub_pid, _ref, :message, %{channel: @pubsub_channel, payload: payload}}, state) do
+  def handle_info(
+        {:redix_pubsub, _pubsub_pid, _ref, :message,
+         %{channel: @pubsub_channel, payload: payload}},
+        state
+      ) do
     # When a new item is added that is earlier than our current timer, we receive this
     Logger.info("Received wakeup: #{payload}")
+
     if String.starts_with?(payload, "new_earliest:") do
       # Cancel current timer and re-evaluate immediately
       if state.timer_ref, do: Process.cancel_timer(state.timer_ref)
       send(self(), :tick)
     end
+
     {:noreply, state}
   end
-  
+
   @impl true
   def handle_info({:redix_pubsub, _pubsub, _ref, _type, _msg}, state) do
     # Ignore other pubsub events

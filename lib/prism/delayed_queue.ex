@@ -39,13 +39,24 @@ defmodule Prism.DelayedQueue do
     """
 
     idx = :erlang.phash2(System.unique_integer(), 5)
-    case Redix.command(:"my_redix_#{idx}", ["EVAL", script, "2", @zset_key, @pubsub_channel, to_string(execute_at_ms), json_payload]) do
+
+    case Redix.command(:"my_redix_#{idx}", [
+           "EVAL",
+           script,
+           "2",
+           @zset_key,
+           @pubsub_channel,
+           to_string(execute_at_ms),
+           json_payload
+         ]) do
       {:ok, 1} ->
         Logger.debug("Enqueued retry at #{execute_at_ms} (Earliest item)")
         :ok
+
       {:ok, 0} ->
         Logger.debug("Enqueued retry at #{execute_at_ms}")
         :ok
+
       {:error, reason} ->
         Logger.error("Failed to enqueue retry: #{inspect(reason)}")
         {:error, reason}
@@ -65,7 +76,7 @@ defmodule Prism.DelayedQueue do
     local now_ms = tonumber(ARGV[1])
 
     local due_items = redis.call("ZRANGEBYSCORE", zset_key, "-inf", now_ms)
-    
+
     if #due_items > 0 then
       redis.call("ZREM", zset_key, unpack(due_items))
       
@@ -84,16 +95,27 @@ defmodule Prism.DelayedQueue do
     """
 
     idx = :erlang.phash2(System.unique_integer(), 5)
-    case Redix.command(:"my_redix_#{idx}", ["EVAL", script, "2", @zset_key, @stream_key, to_string(now_ms)]) do
+
+    case Redix.command(:"my_redix_#{idx}", [
+           "EVAL",
+           script,
+           "2",
+           @zset_key,
+           @stream_key,
+           to_string(now_ms)
+         ]) do
       {:ok, nil} ->
         {:ok, nil}
+
       {:ok, next_score_str} when is_binary(next_score_str) ->
         case Float.parse(next_score_str) do
           {score, _} -> {:ok, trunc(score)}
           :error -> {:ok, nil}
         end
+
       {:ok, next_score} when is_integer(next_score) ->
         {:ok, next_score}
+
       {:error, reason} ->
         Logger.error("Failed to migrate due items: #{inspect(reason)}")
         {:error, reason}
