@@ -14,7 +14,7 @@ defmodule Prism.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger, :opentelemetry_exporter, :opentelemetry],
+      extra_applications: [:logger],
       mod: {Prism.Application, []}
     ]
   end
@@ -29,8 +29,8 @@ defmodule Prism.MixProject do
       {:redix, "~> 1.4"},
       {:libcluster, "~> 3.4"},
       {:opentelemetry_api, "~> 1.3"},
-      {:opentelemetry, "~> 1.4"},
-      {:opentelemetry_exporter, "~> 1.6"}
+      {:opentelemetry_exporter, "~> 1.6"},
+      {:opentelemetry, "~> 1.4"}
     ]
   end
 end
