@@ -283,13 +283,16 @@ defmodule Prism.FanoutBroadway do
         store_reply_index(parent_message_id, successes)
       end
 
+      new_trace_headers = :otel_propagator_text_map.inject([]) |> Enum.into(%{})
+
       payload_map = %{
         batch_id: batch_id,
         status: "success",
         action: action,
         # We map successes to message_ids list
         message_ids: Enum.reverse(successes),
-        failures: Enum.reverse(failures)
+        failures: Enum.reverse(failures),
+        trace_headers: new_trace_headers
       }
 
       payload_map =

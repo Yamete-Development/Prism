@@ -439,6 +439,14 @@ defmodule Prism.DiscordWorker do
 
       {:ok, msg_id} ->
         Logger.info("Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!")
+
+        # Cache success to prevent redelivery on worker crash
+        if batch_id do
+          checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
+          msg_id_val = if is_binary(msg_id), do: msg_id, else: "done"
+          redix_command(["SETEX", checkpoint_key, "86400", msg_id_val])
+        end
+
         publish_partial(action, target, batch_id, parent_msg_id, msg_id, nil)
     end
   end
@@ -510,12 +518,15 @@ defmodule Prism.DiscordWorker do
           {[succ_info], []}
         end
 
+      new_trace_headers = :otel_propagator_text_map.inject([]) |> Enum.into(%{})
+
       payload = %{
         "batch_id" => batch_id,
         "status" => "partial_retry",
         "action" => action,
         "message_ids" => successes,
-        "failures" => failures
+        "failures" => failures,
+        "trace_headers" => new_trace_headers
       }
 
       payload =

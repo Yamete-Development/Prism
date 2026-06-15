@@ -10,7 +10,19 @@ defmodule Prism.Application do
     require Logger
 
     unless Node.alive?() do
-      Node.start(:prism, :shortnames)
+      case Node.start(:prism, :shortnames) do
+        {:ok, _pid} -> 
+          :ok
+        {:error, reason} ->
+          Logger.error("""
+          [Prism] Failed to start Erlang distribution! 
+          Reason: #{inspect(reason)}
+          
+          This usually happens because 'epmd' (Erlang Port Mapper Daemon) is not running.
+          Try running 'epmd -daemon' in your terminal before starting the application,
+          or start the app with 'iex --sname prism -S mix'.
+          """)
+      end
     end
 
     Logger.info(
@@ -36,8 +48,13 @@ defmodule Prism.Application do
     ]
 
     children =
+      if Node.alive?() do
+        [{Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]}]
+      else
+        Logger.warning("[Prism] Node is not alive (Erlang distribution offline). Skipping Cluster.Supervisor to avoid {:error, :address} crashes.")
+        []
+      end ++
       [
-        {Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]},
         {Finch,
          name: DiscordFinch, pools: %{"https://discord.com" => [protocols: [:http2], count: 20]}},
         {Task.Supervisor, name: Prism.TaskSup},
