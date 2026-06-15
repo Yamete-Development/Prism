@@ -472,7 +472,7 @@ defmodule Prism.DiscordWorker do
       "method" => to_string(method),
       "url" => url,
       "headers" => Enum.into(headers, %{}),
-      "body" => IO.iodata_to_binary(body),
+      "body" => if(is_nil(body), do: nil, else: IO.iodata_to_binary(body)),
       "webhook_id" => webhook_id,
       "message_id" => message_id,
       "batch_id" => batch_id,
