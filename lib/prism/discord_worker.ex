@@ -710,11 +710,13 @@ defmodule Prism.DiscordWorker do
       {:ok, %{status: 404, body: resp_body}} ->
         case Jason.decode(resp_body) do
           {:ok, %{"code" => 10008}} ->
-            Logger.info(
-              "Webhook_id=#{webhook_id} returned 10008. Treating as transient to handle eventual consistency."
-            )
-
-            {:error, :message_not_found_transient}
+            if method == :delete do
+              Logger.debug("Webhook_id=#{webhook_id} returned 10008 on delete. Message already deleted, treating as success.")
+              {:ok, nil}
+            else
+              Logger.info("Webhook_id=#{webhook_id} returned 10008. Treating as transient to handle eventual consistency.")
+              {:error, :message_not_found_transient}
+            end
 
           {:ok, %{"code" => code}} when code in [10003, 10015] ->
             Logger.warning(
