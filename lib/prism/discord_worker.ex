@@ -666,10 +666,10 @@ defmodule Prism.DiscordWorker do
         # shared Redis keys (rl:* or rl:global), because that would pollute
         # workers on other IPs. The retry is already enqueued in the delayed
         # queue with the correct delay; that is sufficient for Cloudflare.
-        {retry_after_ms, is_cloudflare} =
+        {retry_after_ms, is_cloudflare, is_global} =
           case Jason.decode(resp_body) do
-            {:ok, %{"retry_after" => retry_after}} when is_number(retry_after) ->
-              {trunc(retry_after * 1000), false}
+            {:ok, %{"retry_after" => retry_after} = parsed} when is_number(retry_after) ->
+              {trunc(retry_after * 1000), false, Map.get(parsed, "global", false) == true}
 
             _ ->
               # Cloudflare / non-JSON response — read the HTTP retry-after header (in seconds)
@@ -687,7 +687,7 @@ defmodule Prism.DiscordWorker do
                     end
                 end
 
-              {cf_delay, true}
+              {cf_delay, true, false}
           end
 
         bucket =
@@ -700,13 +700,15 @@ defmodule Prism.DiscordWorker do
             if String.downcase(k) == "x-ratelimit-scope", do: v
           end)
 
-        global =
+        global_header =
           Enum.find_value(headers, fn {k, v} ->
             if String.downcase(k) == "x-ratelimit-global", do: v
           end)
 
+        is_global_limit = is_global or (global_header == "true") or (scope == "global")
+
         Logger.info(
-          "Rate limited on webhook_id=#{webhook_id} - Delay: #{retry_after_ms}ms | Scope: #{scope || "unknown"} | Bucket: #{bucket || "unknown"} | Global: #{global || "false"} | Cloudflare: #{is_cloudflare}"
+          "Rate limited on webhook_id=#{webhook_id} - Delay: #{retry_after_ms}ms | Scope: #{scope || "unknown"} | Bucket: #{bucket || "unknown"} | Global: #{is_global_limit} | Cloudflare: #{is_cloudflare}"
         )
 
         # Cache Discord rate limits in Redis so the pre-flight can defer future
@@ -717,7 +719,7 @@ defmodule Prism.DiscordWorker do
           capped_retry_after_ms = min(retry_after_ms, 3_600_000)
 
           if capped_retry_after_ms > 0 do
-            if global == "true" do
+            if is_global_limit do
               Logger.debug("Caching global rate limit for #{capped_retry_after_ms}ms")
               redix_command(["PSETEX", "rl:global", Integer.to_string(capped_retry_after_ms), "1"])
             else
