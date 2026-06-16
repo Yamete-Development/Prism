@@ -63,11 +63,8 @@ defmodule Prism.FanoutBroadway do
     # claim more messages from the shared Redis consumer group.
     if backpressure_enabled?() do
       case Prism.Backpressure.backoff_ms() do
-        ms when ms > 0 ->
-          Logger.debug("[Backpressure] Throttling for #{ms}ms to let healthy workers claim messages.")
-          Process.sleep(ms)
-        _ ->
-          :ok
+        ms when ms > 0 -> Process.sleep(ms)
+        _ -> :ok
       end
     end
 

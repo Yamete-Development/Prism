@@ -336,7 +336,7 @@ defmodule Prism.DiscordWorker do
 
     reason_str = if reason, do: " (Reason: #{reason})", else: ""
 
-    Logger.info(
+    Logger.debug(
       "Retrying webhook_id=#{webhook_id} (Attempt #{attempt})#{reason_str} in Broadway pipeline..."
     )
 
@@ -747,8 +747,8 @@ defmodule Prism.DiscordWorker do
               Logger.debug("Webhook_id=#{webhook_id} returned 10008 on delete. Message already deleted, treating as success.")
               {:ok, nil}
             else
-              Logger.info("Webhook_id=#{webhook_id} returned 10008. Treating as transient to handle eventual consistency.")
-              {:error, :message_not_found_transient}
+              Logger.info("Webhook_id=#{webhook_id} returned 10008 on #{method}. Target message not found (deleted). Treating as permanent.")
+              {:error, :message_not_found}
             end
 
           {:ok, %{"code" => code}} when code in [10003, 10015] ->
