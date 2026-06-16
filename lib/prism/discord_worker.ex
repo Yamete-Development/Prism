@@ -45,7 +45,7 @@ defmodule Prism.DiscordWorker do
       rl_key = "rl:#{webhook_id}"
       global_rl_key = "rl:global"
 
-      {cached_result, rl_ttl} =
+      {cached_result, per_webhook_ttl, _global_ttl} =
         if batch_id do
           case redix_pipeline([
                  ["GET", checkpoint_key],
@@ -66,16 +66,16 @@ defmodule Prism.DiscordWorker do
                   _ -> 0
                 end
 
-              global_ttl =
+              gttl =
                 case global_pttl_res do
                   ttl when is_integer(ttl) and ttl > 0 -> ttl
                   _ -> 0
                 end
 
-              {cached, max(ttl, global_ttl)}
+              {cached, ttl, gttl}
 
             _ ->
-              {nil, 0}
+              {nil, 0, 0}
           end
         else
           case redix_pipeline([["PTTL", rl_key], ["PTTL", global_rl_key]]) do
@@ -86,16 +86,16 @@ defmodule Prism.DiscordWorker do
                   _ -> 0
                 end
 
-              global_ttl =
+              gttl =
                 case global_pttl_res do
                   ttl when is_integer(ttl) and ttl > 0 -> ttl
                   _ -> 0
                 end
 
-              {nil, max(ttl, global_ttl)}
+              {nil, ttl, gttl}
 
             _ ->
-              {nil, 0}
+              {nil, 0, 0}
           end
         end
 
@@ -109,9 +109,18 @@ defmodule Prism.DiscordWorker do
         if cached_result do
           cached_result
         else
-          if rl_ttl > 10000 do
+          # Only per-webhook rl:* keys represent real Discord route rate limits
+          # that should block HTTP requests. The rl:global key (set only by
+          # Discord's X-RateLimit-Global:true 429s) and Cloudflare IP blocks
+          # (which do NOT set any Redis key — they are IP-specific and must not
+          # contaminate workers on other IPs) are deliberately ignored here so
+          # the per-webhook bucket can still accept traffic.
+          should_defer = per_webhook_ttl > 10000
+          should_sleep = per_webhook_ttl > 0 and per_webhook_ttl <= 10000
+
+          if should_defer do
             Logger.debug(
-              "Pre-flight rate limit check triggered for webhook_id=#{webhook_id} with long TTL=#{rl_ttl}ms. Rescheduling immediately."
+              "Pre-flight rate limit check triggered for webhook_id=#{webhook_id} with long TTL=#{per_webhook_ttl}ms. Rescheduling immediately."
             )
 
             parent_msg_id = if action == "execute", do: parent_message_id, else: nil
@@ -128,7 +137,7 @@ defmodule Prism.DiscordWorker do
                   webhook_id,
                   message_id,
                   batch_id,
-                  rl_ttl,
+                  per_webhook_ttl,
                   1,
                   parent_msg_id,
                   :rate_limited
@@ -140,12 +149,12 @@ defmodule Prism.DiscordWorker do
                 {:error, reason}
             end
           else
-            if rl_ttl > 0 do
+            if should_sleep do
               Logger.debug(
-                "Pre-flight rate limit check triggered for webhook_id=#{webhook_id}. Sleeping for #{rl_ttl}ms."
+                "Pre-flight rate limit check triggered for webhook_id=#{webhook_id}. Sleeping for #{per_webhook_ttl}ms."
               )
 
-              Process.sleep(rl_ttl)
+              Process.sleep(per_webhook_ttl)
             end
 
             case build_request(action, base_url, message_id, thread_id) do
@@ -649,25 +658,34 @@ defmodule Prism.DiscordWorker do
         # Try Discord JSON body first, then fall back to the standard HTTP
         # retry-after header (used by Cloudflare 1015 bans where the body is
         # plain text like "error code: 1015", not JSON).
-        retry_after_ms =
+        #
+        # Cloudflare blocks are IP-specific — they affect only THIS worker's
+        # server, not other workers on different IPs. We must NOT cache them in
+        # shared Redis keys (rl:* or rl:global), because that would pollute
+        # workers on other IPs. The retry is already enqueued in the delayed
+        # queue with the correct delay; that is sufficient for Cloudflare.
+        {retry_after_ms, is_cloudflare} =
           case Jason.decode(resp_body) do
             {:ok, %{"retry_after" => retry_after}} when is_number(retry_after) ->
-              trunc(retry_after * 1000)
+              {trunc(retry_after * 1000), false}
 
             _ ->
               # Cloudflare / non-JSON response — read the HTTP retry-after header (in seconds)
-              case Enum.find_value(headers, fn {k, v} ->
-                     if String.downcase(k) == "retry-after", do: v
-                   end) do
-                nil ->
-                  5000
+              cf_delay =
+                case Enum.find_value(headers, fn {k, v} ->
+                       if String.downcase(k) == "retry-after", do: v
+                     end) do
+                  nil ->
+                    5000
 
-                value ->
-                  case Integer.parse(value) do
-                    {seconds, _} -> seconds * 1000
-                    :error -> 5000
-                  end
-              end
+                  value ->
+                    case Integer.parse(value) do
+                      {seconds, _} -> seconds * 1000
+                      :error -> 5000
+                    end
+                end
+
+              {cf_delay, true}
           end
 
         bucket =
@@ -686,22 +704,28 @@ defmodule Prism.DiscordWorker do
           end)
 
         Logger.info(
-          "Rate limited on webhook_id=#{webhook_id} - Delay: #{retry_after_ms}ms | Scope: #{scope || "unknown"} | Bucket: #{bucket || "unknown"} | Global: #{global || "false"}"
+          "Rate limited on webhook_id=#{webhook_id} - Delay: #{retry_after_ms}ms | Scope: #{scope || "unknown"} | Bucket: #{bucket || "unknown"} | Global: #{global || "false"} | Cloudflare: #{is_cloudflare}"
         )
 
-        capped_retry_after_ms = min(retry_after_ms, 3_600_000)
+        # Cache Discord rate limits in Redis so the pre-flight can defer future
+        # requests without wasting HTTP calls. Cloudflare blocks are NOT cached
+        # — they are IP-specific and would contaminate workers on other IPs that
+        # share the same Redis. The retry in the delayed queue is sufficient.
+        if not is_cloudflare do
+          capped_retry_after_ms = min(retry_after_ms, 3_600_000)
 
-        if capped_retry_after_ms > 0 do
-          if global == "true" do
-            Logger.debug("Caching global rate limit for #{capped_retry_after_ms}ms")
-            redix_command(["PSETEX", "rl:global", Integer.to_string(capped_retry_after_ms), "1"])
-          else
-            redix_command([
-              "PSETEX",
-              "rl:#{webhook_id}",
-              Integer.to_string(capped_retry_after_ms),
-              "1"
-            ])
+          if capped_retry_after_ms > 0 do
+            if global == "true" do
+              Logger.debug("Caching global rate limit for #{capped_retry_after_ms}ms")
+              redix_command(["PSETEX", "rl:global", Integer.to_string(capped_retry_after_ms), "1"])
+            else
+              redix_command([
+                "PSETEX",
+                "rl:#{webhook_id}",
+                Integer.to_string(capped_retry_after_ms),
+                "1"
+              ])
+            end
           end
         end
 
