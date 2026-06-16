@@ -66,6 +66,7 @@ defmodule Prism.Application do
             id: Prism.PubSub,
             start: {Redix.PubSub, :start_link, [Keyword.put(redis_opts, :name, Prism.PubSub)]}
           },
+          {Prism.Backpressure, []},
           {Prism.DelayedScheduler, []},
           Supervisor.child_spec(
             {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Fast, lane: :fast]},

@@ -448,6 +448,7 @@ defmodule Prism.DiscordWorker do
 
       {:ok, msg_id} ->
         Logger.info("Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!")
+        Prism.Backpressure.record_success()
 
         # Cache success to prevent redelivery on worker crash
         if batch_id do
@@ -634,6 +635,7 @@ defmodule Prism.DiscordWorker do
         if method == :post do
           case Jason.decode(resp_body) do
             {:ok, %{"id" => msg_id}} ->
+              Prism.Backpressure.record_success()
               {:ok, msg_id}
 
             {:ok, parsed} ->
@@ -727,6 +729,11 @@ defmodule Prism.DiscordWorker do
               ])
             end
           end
+        else
+          # Cloudflare IP block — record the exact retry_after so the worker
+          # throttles consumption proportionally. Healthy workers on other IPs
+          # will claim messages from the consumer group while this one sleeps.
+          Prism.Backpressure.record_cloudflare_block(retry_after_ms)
         end
 
         {:error, {:rate_limited, retry_after_ms}}

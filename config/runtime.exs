@@ -33,6 +33,7 @@ config :prism,
     String.to_integer(System.get_env("PRISM_RETRY_MAX_BATCHES_PER_SEC") || "50"),
   retry_broadway_concurrency:
     String.to_integer(System.get_env("PRISM_RETRY_BROADWAY_CONCURRENCY") || "50"),
+  backpressure_enabled: parse_bool.(System.get_env("PRISM_BACKPRESSURE_ENABLED") || "true"),
   callback_include_parent_message_id:
     parse_bool.(System.get_env("PRISM_INCLUDE_PARENT_MESSAGE_ID")),
   reply_index_enabled: parse_bool.(System.get_env("PRISM_REPLY_INDEX_ENABLED")),

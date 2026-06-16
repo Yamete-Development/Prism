@@ -58,6 +58,19 @@ defmodule Prism.FanoutBroadway do
 
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
+    # Backpressure: if this worker is being rate-limited (Cloudflare block or
+    # sustained 429s), throttle consumption so healthy workers on other IPs can
+    # claim more messages from the shared Redis consumer group.
+    if backpressure_enabled?() do
+      case Prism.Backpressure.backoff_ms() do
+        ms when ms > 0 ->
+          Logger.debug("[Backpressure] Throttling for #{ms}ms to let healthy workers claim messages.")
+          Process.sleep(ms)
+        _ ->
+          :ok
+      end
+    end
+
     polled_at = :os.system_time(:millisecond)
     # OffBroadwayRedisStream returns data as [entry_id, [field1, value1, ...]]
     [id, fields] = data
@@ -421,5 +434,9 @@ defmodule Prism.FanoutBroadway do
 
   defp reply_index_enabled? do
     Application.get_env(:prism, :reply_index_enabled, true)
+  end
+
+  defp backpressure_enabled? do
+    Application.get_env(:prism, :backpressure_enabled, true)
   end
 end
