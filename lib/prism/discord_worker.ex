@@ -764,5 +764,5 @@ defmodule Prism.DiscordWorker do
     end)
   end
 
-  defp now_ms, do: :os.system_time(:millisecond)
+  defp now_ms, do: System.monotonic_time(:millisecond)
 end

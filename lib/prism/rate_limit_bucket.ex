@@ -87,7 +87,7 @@ defmodule Prism.RateLimitBucket do
   def acquire(webhook_id, method) do
     key = bucket_key(webhook_id, method)
     g_key = global_key()
-    now_ms = :os.system_time(:millisecond)
+    now_ms = System.monotonic_time(:millisecond)
 
     case redis_command(["EVAL", @acquire_script, "2", key, g_key, to_string(now_ms)]) do
       {:ok, [1, remaining, _]} ->
