@@ -40,7 +40,7 @@ defmodule Prism.FanoutBroadway do
     # Metadata
     "ai" => "author_id",
     "gn" => "guild_name",
-    "bg" => "badges",
+    "bg" => "badges"
   }
 
   @doc """
@@ -65,9 +65,14 @@ defmodule Prism.FanoutBroadway do
 
         expanded_value =
           cond do
-            is_map(value) -> expand_keys(value)
-            is_list(value) -> Enum.map(value, fn item -> if is_map(item), do: expand_keys(item), else: item end)
-            true -> value
+            is_map(value) ->
+              expand_keys(value)
+
+            is_list(value) ->
+              Enum.map(value, fn item -> if is_map(item), do: expand_keys(item), else: item end)
+
+            true ->
+              value
           end
 
         Map.put(acc, long_key, expanded_value)
@@ -131,80 +136,85 @@ defmodule Prism.FanoutBroadway do
 
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
-    # Backpressure: if this worker is being rate-limited (Cloudflare block or
-    # sustained 429s), throttle consumption so healthy workers on other IPs can
-    # claim more messages from the shared Redis consumer group.
-    if backpressure_enabled?() do
-      case Prism.Backpressure.backoff_ms() do
-        ms when ms > 0 -> Process.sleep(ms)
-        _ -> :ok
-      end
-    end
+    # If this worker is under a Cloudflare ban, re‑enqueue the batch and skip all network work
+    if backpressure_enabled?() and Prism.Backpressure.unhealthy?() do
+      delay_ms = Prism.Backpressure.backoff_ms()
+      [_id, fields] = data
+      payload_json = get_payload_from_redis_data(fields)
 
-    polled_at = :os.system_time(:millisecond)
-    # OffBroadwayRedisStream returns data as [entry_id, [field1, value1, ...]]
-    [id, fields] = data
-
-    enqueued_at =
-      case String.split(id, "-") do
-        [timestamp_str, _] ->
-          case Integer.parse(timestamp_str) do
-            {ts, ""} -> ts
-            _ -> :os.system_time(:millisecond)
-          end
-
-        _ ->
-          :os.system_time(:millisecond)
-      end
-
-    payload_json = get_payload_from_redis_data(fields)
-
-    case Jason.decode(payload_json) do
-      {:ok, raw} ->
-        # Expand minified keys to full names for downstream processing.
-        # If the payload is already in long-key format, expand_keys is a no-op.
+      # Decode, expand, and re‑enqueue the full batch payload with the remaining ban delay
+      with {:ok, raw} <- Jason.decode(payload_json) do
         payload = expand_keys(raw)
+        Prism.DelayedQueue.enqueue(payload, delay_ms)
+      end
 
-        %{"batch_id" => batch_id, "targets" => targets} = payload
-        action = Map.get(payload, "action", "execute")
-        discord_payload = Map.get(payload, "payload", %{})
-        parent_message_id = Map.get(payload, "message_id")
-        metadata = Map.get(payload, "metadata", %{})
-        hub_id = Map.get(payload, "hub_id")
+      # Ack the original stream message immediately – the batch will be processed later
+      message
+    else
+      polled_at = :os.system_time(:millisecond)
+      [id, fields] = data
 
-        shard_index = Map.get(payload, "shard_index", 0)
-        trace_headers = Map.get(payload, "trace_headers", %{}) |> Enum.to_list()
+      enqueued_at =
+        case String.split(id, "-") do
+          [timestamp_str, _] ->
+            case Integer.parse(timestamp_str) do
+              {ts, ""} -> ts
+              _ -> :os.system_time(:millisecond)
+            end
 
-        ctx = :otel_propagator_text_map.extract(trace_headers)
-        OpenTelemetry.Ctx.attach(ctx)
-
-        OpenTelemetry.Tracer.with_span "prism.worker.process_batch" do
-          OpenTelemetry.Tracer.set_attributes([
-            {:batch_id, batch_id},
-            {:action, action},
-            {:target_count, length(targets)},
-            {:shard_index, shard_index}
-          ])
-
-          process_batch(
-            action,
-            batch_id,
-            discord_payload,
-            targets,
-            polled_at,
-            enqueued_at,
-            parent_message_id,
-            metadata,
-            hub_id,
-            shard_index
-          )
+          _ ->
+            :os.system_time(:millisecond)
         end
 
-        message
+      payload_json = get_payload_from_redis_data(fields)
 
-      _ ->
-        Logger.error("Failed to parse or invalid payload: #{inspect(payload_json)}")
-        Message.failed(message, "invalid payload")
+      case Jason.decode(payload_json) do
+        {:ok, raw} ->
+          # Expand minified keys to full names for downstream processing.
+          # If the payload is already in long-key format, expand_keys is a no-op.
+          payload = expand_keys(raw)
+
+          %{"batch_id" => batch_id, "targets" => targets} = payload
+          action = Map.get(payload, "action", "execute")
+          discord_payload = Map.get(payload, "payload", %{})
+          parent_message_id = Map.get(payload, "message_id")
+          metadata = Map.get(payload, "metadata", %{})
+          hub_id = Map.get(payload, "hub_id")
+
+          shard_index = Map.get(payload, "shard_index", 0)
+          trace_headers = Map.get(payload, "trace_headers", %{}) |> Enum.to_list()
+
+          ctx = :otel_propagator_text_map.extract(trace_headers)
+          OpenTelemetry.Ctx.attach(ctx)
+
+          OpenTelemetry.Tracer.with_span "prism.worker.process_batch" do
+            OpenTelemetry.Tracer.set_attributes([
+              {:batch_id, batch_id},
+              {:action, action},
+              {:target_count, length(targets)},
+              {:shard_index, shard_index}
+            ])
+
+            process_batch(
+              action,
+              batch_id,
+              discord_payload,
+              targets,
+              polled_at,
+              enqueued_at,
+              parent_message_id,
+              metadata,
+              hub_id,
+              shard_index
+            )
+          end
+
+          message
+
+        _ ->
+          Logger.error("Failed to parse or invalid payload: #{inspect(payload_json)}")
+          Message.failed(message, "invalid payload")
+      end
     end
   end
 
@@ -396,7 +406,18 @@ defmodule Prism.FanoutBroadway do
         Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
 
       idx = :erlang.phash2(System.unique_integer(), 5)
-      Redix.command(:"my_redix_#{idx}", ["XADD", callback_stream, "MAXLEN", "~", "100000", "*", "payload", payload])
+
+      Redix.command(:"my_redix_#{idx}", [
+        "XADD",
+        callback_stream,
+        "MAXLEN",
+        "~",
+        "100000",
+        "*",
+        "payload",
+        payload
+      ])
+
       Logger.debug("Published callback to #{callback_stream} for batch #{batch_id}#{parent_log}")
 
       # Send a real-time event via :pg for the dashboard to render

@@ -20,11 +20,27 @@ defmodule Prism.RateLimitBucket do
   @key_prefix "rl:b:#{@worker_id}"
 
   @acquire_script """
+  local now = tonumber(ARGV[1])
+
+  -- Check global rate limit first
+  local global_data = redis.call("HMGET", KEYS[2], "limit", "remaining", "reset_at")
+  local g_limit = tonumber(global_data[1])
+  local g_remaining = tonumber(global_data[2])
+  local g_reset_at = tonumber(global_data[3])
+
+  if g_limit then
+    if g_reset_at and g_reset_at <= now then
+      redis.call("DEL", KEYS[2])
+    elseif g_remaining and g_remaining <= 0 then
+      return {0, 0, g_reset_at - now}
+    end
+  end
+
+  -- Check webhook-specific rate limit
   local data = redis.call("HMGET", KEYS[1], "limit", "remaining", "reset_at")
   local limit = tonumber(data[1])
   local remaining = tonumber(data[2])
   local reset_at = tonumber(data[3])
-  local now = tonumber(ARGV[1])
 
   -- No state yet: allow. The response will populate the bucket.
   if not limit then
@@ -71,9 +87,10 @@ defmodule Prism.RateLimitBucket do
           {:ok, remaining :: integer()} | {:blocked, ttl_ms :: integer()}
   def acquire(webhook_id, method) do
     key = bucket_key(webhook_id, method)
+    g_key = global_key()
     now_ms = System.monotonic_time(:millisecond)
 
-    case redis_command(["EVAL", @acquire_script, "1", key, to_string(now_ms)]) do
+    case redis_command(["EVAL", @acquire_script, "2", key, g_key, to_string(now_ms)]) do
       {:ok, [1, remaining, _]} ->
         {:ok, remaining}
 

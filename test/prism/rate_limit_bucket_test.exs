@@ -100,6 +100,29 @@ defmodule Prism.RateLimitBucketTest do
 
       assert {:blocked, _} = RateLimitBucket.acquire(webhook, "post")
     end
+
+    test "blocks when global rate limit is active", %{redix: redix} do
+      webhook = "acq_global"
+      global_key = RateLimitBucket.global_key()
+      now_ms = System.monotonic_time(:millisecond)
+
+      Redix.command!(redix, ["HSET", global_key, "limit", "50", "remaining", "0", "reset_at", to_string(now_ms + 4000)])
+
+      assert {:blocked, ttl} = RateLimitBucket.acquire(webhook, "post")
+      assert ttl > 0
+      assert ttl <= 4000
+    end
+
+    test "clears expired global rate limit and allows request", %{redix: redix} do
+      webhook = "acq_global_expired"
+      global_key = RateLimitBucket.global_key()
+      now_ms = System.monotonic_time(:millisecond)
+
+      Redix.command!(redix, ["HSET", global_key, "limit", "50", "remaining", "0", "reset_at", to_string(now_ms - 1000)])
+
+      assert {:ok, -1} = RateLimitBucket.acquire(webhook, "post")
+      refute Redix.command!(redix, ["EXISTS", global_key]) == 1
+    end
   end
 
   describe "update/5" do
@@ -149,13 +172,11 @@ defmodule Prism.RateLimitBucketTest do
 
       Redix.command!(redix, ["HSET", key, "limit", "3", "remaining", "3", "reset_at", to_string(now_ms + 60000)])
 
-      parent = self()
-
       results =
         1..5
         |> Enum.map(fn _ ->
           Task.async(fn ->
-            send(parent, {:result, RateLimitBucket.acquire(webhook, "post")})
+            RateLimitBucket.acquire(webhook, "post")
           end)
         end)
         |> Enum.map(&Task.await/1)

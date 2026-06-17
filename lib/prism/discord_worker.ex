@@ -63,11 +63,7 @@ defmodule Prism.DiscordWorker do
         if cached_result do
           cached_result
         else
-          # Pre-flight rate-limit check using bucket-state tracking.
-          # If the bucket is exhausted, defer (>10s TTL) or sleep (<=10s).
-          # Global rate limits and Cloudflare blocks are deliberately not
-          # checked here — global is IP-specific and Cloudflare uses local
-          # backpressure (Prism.Backpressure) instead of shared Redis.
+          # Pre-flight rate-limit check
           {should_defer, should_sleep, rate_limit_delay_ms} =
             case Prism.RateLimitBucket.acquire(webhook_id, method_str) do
               {:ok, _remaining} -> {false, false, 0}
@@ -100,7 +96,8 @@ defmodule Prism.DiscordWorker do
                   :rate_limited
                 )
 
-                {:ok, nil}
+                # Return the error so the batch knows this target was not a success
+                {:error, {:rate_limited, rate_limit_delay_ms}}
 
               {:error, reason} ->
                 {:error, reason}
@@ -118,7 +115,10 @@ defmodule Prism.DiscordWorker do
               {:ok, method, url} ->
                 req_start = System.monotonic_time(:millisecond)
                 req_start_wall = :os.system_time(:millisecond)
-                result = do_http_request(method, method_str, url, headers, body, webhook_id, message_id)
+
+                result =
+                  do_http_request(method, method_str, url, headers, body, webhook_id, message_id)
+
                 req_end = System.monotonic_time(:millisecond)
                 req_end_wall = :os.system_time(:millisecond)
 
@@ -147,8 +147,6 @@ defmodule Prism.DiscordWorker do
                   end
                 end
 
-                # Handle retries if needed
-                # The parent_message_id is now passed down from Broadway in 'message_id' param if it's the execute action
                 parent_msg_id = if action == "execute", do: parent_message_id, else: nil
 
                 case result do
@@ -171,8 +169,8 @@ defmodule Prism.DiscordWorker do
                       :rate_limited
                     )
 
-                    # Unblock batch
-                    {:ok, nil}
+                    # ★ Return the error so the batch knows it failed
+                    {:error, {:rate_limited, delay_ms}}
 
                   {:error, {:server_error, _}} ->
                     OpenTelemetry.Tracer.set_attribute(:error_type, "server_error")
@@ -193,6 +191,7 @@ defmodule Prism.DiscordWorker do
                       :server_error
                     )
 
+                    # server errors are retried, batch can consider this as “handled”
                     {:ok, nil}
 
                   {:error, :network_error} ->
@@ -236,6 +235,11 @@ defmodule Prism.DiscordWorker do
                     )
 
                     {:ok, nil}
+
+                  # ★ Permanent errors: never retry, return error immediately
+                  {:error, :permanent} ->
+                    OpenTelemetry.Tracer.set_attribute(:error_type, "permanent")
+                    {:error, :permanent}
 
                   other ->
                     other
@@ -401,14 +405,15 @@ defmodule Prism.DiscordWorker do
           )
         end
 
-      {:error, permanent_reason} ->
-        publish_partial(action, target, batch_id, parent_msg_id, nil, permanent_reason)
+      # ★ Permanent errors: stop retrying immediately
+      {:error, :permanent} ->
+        Logger.warning("Permanent error for webhook_id=#{webhook_id}, not retrying.")
+        publish_partial(action, target, batch_id, parent_msg_id, nil, :permanent)
 
       {:ok, msg_id} ->
         Logger.info("Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!")
         Prism.Backpressure.record_success()
 
-        # Cache success to prevent redelivery on worker crash
         if batch_id do
           checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
           msg_id_val = if is_binary(msg_id), do: msg_id, else: "done"
@@ -416,6 +421,10 @@ defmodule Prism.DiscordWorker do
         end
 
         publish_partial(action, target, batch_id, parent_msg_id, msg_id, nil)
+
+      other ->
+        Logger.error("Unexpected retry result for webhook_id=#{webhook_id}: #{inspect(other)}")
+        publish_partial(action, target, batch_id, parent_msg_id, nil, other)
     end
   end
 
@@ -473,6 +482,7 @@ defmodule Prism.DiscordWorker do
               error_reason == :bad_request -> {"bad_request", "transient"}
               error_reason == :server_error -> {"server_error", "transient"}
               error_reason == :network_error -> {"network_error", "transient"}
+              error_reason == :permanent -> {"permanent_error", "permanent"}
               true -> {inspect(error_reason), "transient"}
             end
 
@@ -539,7 +549,8 @@ defmodule Prism.DiscordWorker do
         {:webhook_id, webhook_id}
       ])
 
-      result = do_http_request_internal(method, method_str, url, headers, body, webhook_id, message_id)
+      result =
+        do_http_request_internal(method, method_str, url, headers, body, webhook_id, message_id)
 
       case result do
         {:ok, _} ->
@@ -550,6 +561,9 @@ defmodule Prism.DiscordWorker do
 
         {:error, {:server_error, _}} ->
           OpenTelemetry.Tracer.set_attribute(:error_type, "server_error")
+
+        {:error, :permanent} ->
+          OpenTelemetry.Tracer.set_attribute(:error_type, "permanent")
 
         {:error, reason} ->
           OpenTelemetry.Tracer.set_attribute(:error_type, inspect(reason))
@@ -563,9 +577,6 @@ defmodule Prism.DiscordWorker do
     case Finch.build(method, url, headers, body)
          |> Finch.request(DiscordFinch, receive_timeout: 30_000, pool_timeout: 30_000) do
       {:ok, %{status: status, body: resp_body, headers: headers}} when status in 200..299 ->
-        # Update bucket state on every response (not just remaining=0).
-        # This keeps the rate-limit state accurate at all times, matching
-        # the twilight RateLimiter pattern of feeding headers back on every response.
         limit = extract_int_header(headers, "x-ratelimit-limit")
         remaining = extract_int_header(headers, "x-ratelimit-remaining")
         reset_after_sec = extract_float_header(headers, "x-ratelimit-reset-after")
@@ -600,22 +611,12 @@ defmodule Prism.DiscordWorker do
         end
 
       {:ok, %{status: 429, body: resp_body, headers: headers}} ->
-        # Try Discord JSON body first, then fall back to the standard HTTP
-        # retry-after header (used by Cloudflare 1015 bans where the body is
-        # plain text like "error code: 1015", not JSON).
-        #
-        # Cloudflare blocks are IP-specific — they affect only THIS worker's
-        # server, not other workers on different IPs. We must NOT cache them in
-        # shared rate-limit bucket keys, because that would pollute
-        # workers on other IPs. The retry is already enqueued in the delayed
-        # queue with the correct delay; that is sufficient for Cloudflare.
         {retry_after_ms, is_cloudflare, is_global} =
           case Jason.decode(resp_body) do
             {:ok, %{"retry_after" => retry_after} = parsed} when is_number(retry_after) ->
               {trunc(retry_after * 1000), false, Map.get(parsed, "global", false) == true}
 
             _ ->
-              # Cloudflare / non-JSON response — read the HTTP retry-after header (in seconds)
               cf_delay =
                 case Enum.find_value(headers, fn {k, v} ->
                        if String.downcase(k) == "retry-after", do: v
@@ -648,17 +649,12 @@ defmodule Prism.DiscordWorker do
             if String.downcase(k) == "x-ratelimit-global", do: v
           end)
 
-        is_global_limit = is_global or (global_header == "true") or (scope == "global")
+        is_global_limit = is_global or global_header == "true" or scope == "global"
 
         Logger.info(
           "Rate limited on webhook_id=#{webhook_id} - Delay: #{retry_after_ms}ms | Scope: #{scope || "unknown"} | Bucket: #{bucket || "unknown"} | Global: #{is_global_limit} | Cloudflare: #{is_cloudflare}"
         )
 
-        # Update bucket state for Discord rate limits so the pre-flight can
-        # block future requests without wasting HTTP calls.
-        # Cloudflare blocks are NOT cached in Redis — they are IP-specific and
-        # would contaminate workers on other IPs that share the same Redis.
-        # The retry in the delayed queue and local backpressure are sufficient.
         if not is_cloudflare do
           limit = extract_int_header(headers, "x-ratelimit-limit") || 5
           reset_at_ms = now_ms() + retry_after_ms
@@ -675,14 +671,35 @@ defmodule Prism.DiscordWorker do
 
         {:error, {:rate_limited, retry_after_ms}}
 
+      # ★ Permanent errors: 401, 403, 400
+      {:ok, %{status: status, body: resp_body}} when status in [401, 403] ->
+        Logger.warning(
+          "Permanent error #{status} for webhook_id=#{webhook_id} – token invalid or missing permissions. Dropping."
+        )
+
+        {:error, :permanent}
+
+      {:ok, %{status: 400, body: resp_body}} ->
+        Logger.error(
+          "Bad request webhook_id=#{webhook_id} body=#{resp_body} – dropping permanently."
+        )
+
+        {:error, :permanent}
+
       {:ok, %{status: 404, body: resp_body}} ->
         case Jason.decode(resp_body) do
           {:ok, %{"code" => 10008}} ->
             if method == :delete do
-              Logger.debug("Webhook_id=#{webhook_id} returned 10008 on delete. Message already deleted, treating as success.")
+              Logger.debug(
+                "Webhook_id=#{webhook_id} returned 10008 on delete. Message already deleted, treating as success."
+              )
+
               {:ok, nil}
             else
-              Logger.info("Webhook_id=#{webhook_id} returned 10008 on #{method}. Target message not found (deleted). Treating as permanent.")
+              Logger.info(
+                "Webhook_id=#{webhook_id} returned 10008 on #{method}. Target message not found (deleted)."
+              )
+
               {:error, :message_not_found}
             end
 
@@ -697,17 +714,6 @@ defmodule Prism.DiscordWorker do
             Logger.warning("Treating 404 as transient webhook_id=#{webhook_id} body=#{resp_body}")
             {:error, :network_error}
         end
-
-      {:ok, %{status: status, body: resp_body}} when status in [401, 403] ->
-        Logger.warning(
-          "Treating #{status} as transient webhook_id=#{webhook_id} body=#{resp_body}"
-        )
-
-        {:error, :network_error}
-
-      {:ok, %{status: 400, body: resp_body}} ->
-        Logger.error("Bad request webhook_id=#{webhook_id} body=#{resp_body}")
-        {:error, :bad_request}
 
       {:ok, %{status: status, body: resp_body}} when status in 500..599 ->
         Logger.error("Server error #{status} for webhook_id=#{webhook_id}, body=#{resp_body}")
