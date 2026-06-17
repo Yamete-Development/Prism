@@ -42,7 +42,7 @@ Configuration is handled dynamically via environment variables. See the provided
 | `PRISM_BATCH_MAX_CONCURRENCY` | Maximum concurrent HTTP requests fired per batch. | `80` |
 | `PRISM_INCLUDE_PARENT_MESSAGE_ID` | Include the root message ID in execute callbacks. | `true` |
 | `PRISM_REPLY_INDEX_ENABLED` | Persist the durable Redis reply index for execute callbacks. | `true` |
-| `PRISM_REPLY_INDEX_PREFIX` | Redis key prefix used for reply delivery state. | `prism:delivery` |
+| `PRISM_REPLY_INDEX_PREFIX` | Redis key prefix used for reply delivery state. | `p:d` |
 | `PRISM_REPLY_INDEX_TTL_SECONDS` | TTL for reply delivery index keys. | `604800` |
 | `PRISM_REDIS_SSE_ENABLED` | Set to `true` to publish payload to Redis Pub/Sub for SSE streaming. | `false` |
 | `PRISM_REDIS_SSE_TOPIC_PREFIX` | Prefix for the Pub/Sub topic used by SSE events. | `dashboard:stream:hub:` |
