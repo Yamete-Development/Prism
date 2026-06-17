@@ -48,6 +48,13 @@ defmodule Prism.RetryBroadway do
 
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
+    if Application.get_env(:prism, :backpressure_enabled, true) do
+      case Prism.Backpressure.backoff_ms() do
+        ms when ms > 0 -> Process.sleep(ms)
+        _ -> :ok
+      end
+    end
+
     polled_at = :os.system_time(:millisecond)
     # OffBroadwayRedisStream returns data as [entry_id, [field1, value1, ...]]
     [id, fields] = data

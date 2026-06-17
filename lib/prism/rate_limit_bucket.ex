@@ -16,8 +16,7 @@ defmodule Prism.RateLimitBucket do
 
   require Logger
 
-  @worker_id :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
-  @key_prefix "rl:b:#{@worker_id}"
+  # Scoping key prefixes at runtime rather than compile-time to prevent key conflicts across different nodes and container restarts.
 
   @acquire_script """
   local now = tonumber(ARGV[1])
@@ -88,7 +87,7 @@ defmodule Prism.RateLimitBucket do
   def acquire(webhook_id, method) do
     key = bucket_key(webhook_id, method)
     g_key = global_key()
-    now_ms = System.monotonic_time(:millisecond)
+    now_ms = :os.system_time(:millisecond)
 
     case redis_command(["EVAL", @acquire_script, "2", key, g_key, to_string(now_ms)]) do
       {:ok, [1, remaining, _]} ->
@@ -170,10 +169,15 @@ defmodule Prism.RateLimitBucket do
   end
 
   @doc false
-  def bucket_key(webhook_id, method), do: "#{@key_prefix}:#{webhook_id}:#{method}"
+  def bucket_key(webhook_id, method), do: "#{key_prefix()}:#{webhook_id}:#{method}"
 
   @doc false
-  def global_key, do: "#{@key_prefix}:global"
+  def global_key, do: "#{key_prefix()}:global"
+
+  defp key_prefix do
+    worker_id = :persistent_term.get(:prism_worker_id, "default")
+    "rl:b:#{worker_id}"
+  end
 
   defp redis_command(command) do
     idx = :erlang.phash2(System.unique_integer(), 5)

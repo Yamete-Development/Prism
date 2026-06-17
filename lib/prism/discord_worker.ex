@@ -613,22 +613,32 @@ defmodule Prism.DiscordWorker do
       {:ok, %{status: 429, body: resp_body, headers: headers}} ->
         {retry_after_ms, is_cloudflare, is_global} =
           case Jason.decode(resp_body) do
-            {:ok, %{"retry_after" => retry_after} = parsed} when is_number(retry_after) ->
-              {trunc(retry_after * 1000), false, Map.get(parsed, "global", false) == true}
+            {:ok, parsed} when is_map(parsed) ->
+              retry_after_ms =
+                case Map.get(parsed, "retry_after") do
+                  val when is_number(val) ->
+                    trunc(val * 1000)
+
+                  _ ->
+                    case extract_float_header(headers, "retry-after") do
+                      val when is_number(val) -> trunc(val * 1000)
+                      _ -> 5000
+                    end
+                end
+
+              is_global =
+                Map.get(parsed, "global", false) == true or
+                  Map.get(parsed, "code") == 0 or
+                  String.contains?(String.downcase(Map.get(parsed, "message", "")), "global rate limits")
+
+              {retry_after_ms, false, is_global}
 
             _ ->
+              # Cloudflare / non-JSON response — read the HTTP retry-after header (in seconds)
               cf_delay =
-                case Enum.find_value(headers, fn {k, v} ->
-                       if String.downcase(k) == "retry-after", do: v
-                     end) do
-                  nil ->
-                    5000
-
-                  value ->
-                    case Integer.parse(value) do
-                      {seconds, _} -> seconds * 1000
-                      :error -> 5000
-                    end
+                case extract_float_header(headers, "retry-after") do
+                  val when is_number(val) -> trunc(val * 1000)
+                  _ -> 5000
                 end
 
               {cf_delay, true, false}
@@ -672,7 +682,7 @@ defmodule Prism.DiscordWorker do
         {:error, {:rate_limited, retry_after_ms}}
 
       # ★ Permanent errors: 401, 403, 400
-      {:ok, %{status: status, body: resp_body}} when status in [401, 403] ->
+      {:ok, %{status: status, body: _resp_body}} when status in [401, 403] ->
         Logger.warning(
           "Permanent error #{status} for webhook_id=#{webhook_id} – token invalid or missing permissions. Dropping."
         )
@@ -754,5 +764,5 @@ defmodule Prism.DiscordWorker do
     end)
   end
 
-  defp now_ms, do: System.monotonic_time(:millisecond)
+  defp now_ms, do: :os.system_time(:millisecond)
 end

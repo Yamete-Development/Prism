@@ -32,6 +32,10 @@ defmodule Prism.Application do
     # Initialize atomic counter for Broadway batches
     :persistent_term.put(:active_batches, :atomics.new(1, signed: false))
 
+    # Initialize worker ID at runtime to ensure unique Redis key scoping per host/IP
+    worker_id = System.get_env("PRISM_WORKER_ID") || (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
+    :persistent_term.put(:prism_worker_id, worker_id)
+
     redis_opts = Application.get_env(:prism, :redis_opts, host: "localhost", port: 6379)
 
     redix_children =
