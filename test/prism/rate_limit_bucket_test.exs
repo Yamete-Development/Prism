@@ -30,10 +30,15 @@ defmodule Prism.RateLimitBucketTest do
   end
 
   describe "bucket_key/2" do
-    test "produces the correct prefix, webhook_id, and method" do
-      assert RateLimitBucket.bucket_key("abc123", "post") == "rl:b:abc123:post"
-      assert RateLimitBucket.bucket_key("abc123", "patch") == "rl:b:abc123:patch"
-      assert RateLimitBucket.bucket_key("abc123", "delete") == "rl:b:abc123:delete"
+    test "produces keys with correct prefix, webhook_id, and method" do
+      key = RateLimitBucket.bucket_key("abc123", "post")
+      assert String.match?(key, ~r/^rl:b:[a-f0-9]+:abc123:post$/)
+
+      key2 = RateLimitBucket.bucket_key("abc123", "patch")
+      assert String.match?(key2, ~r/^rl:b:[a-f0-9]+:abc123:patch$/)
+
+      key3 = RateLimitBucket.bucket_key("abc123", "delete")
+      assert String.match?(key3, ~r/^rl:b:[a-f0-9]+:abc123:delete$/)
     end
   end
 
@@ -125,7 +130,7 @@ defmodule Prism.RateLimitBucketTest do
 
   describe "update_global/3" do
     test "updates the global rate-limit key", %{redix: redix} do
-      global_key = "rl:b:global"
+      global_key = RateLimitBucket.global_key()
       reset_at = System.monotonic_time(:millisecond) + 3000
 
       RateLimitBucket.update_global(50, 0, reset_at)

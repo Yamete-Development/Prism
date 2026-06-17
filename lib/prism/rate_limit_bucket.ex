@@ -1,17 +1,23 @@
 defmodule Prism.RateLimitBucket do
   @moduledoc """
-  Distributed rate-limit bucket backed by a Redis hash.
+  Per-worker rate-limit bucket backed by a Redis hash.
 
   Replaces the binary `rl:*` TTL keys with a counter-based model that tracks
   `limit`, `remaining`, `reset_at`, and `bucket` per webhook+method combination.
-  Uses Redis Lua scripting for atomic check-and-decrement operations, eliminating
-  the race condition where concurrent requests to the same webhook all pass
-  pre-flight checks and generate unnecessary 429 responses.
+  Uses Redis Lua scripting for atomic check-and-decrement operations.
+
+  Keys are scoped by a random `@worker_id` generated at compile time because
+  Prism sends webhook requests without an `Authorization` header.  Discord
+  therefore applies `X-RateLimit-Scope: user` and global rate limits to the
+  worker's IP address, *not* to the webhook token.  Sharing state across
+  workers on different IPs would cause one worker's 429 to falsely block
+  another worker that still has a clean bucket.
   """
 
   require Logger
 
-  @key_prefix "rl:b"
+  @worker_id :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+  @key_prefix "rl:b:#{@worker_id}"
 
   @acquire_script """
   local data = redis.call("HMGET", KEYS[1], "limit", "remaining", "reset_at")
@@ -124,7 +130,7 @@ defmodule Prism.RateLimitBucket do
   @spec update_global(limit :: integer(), remaining :: integer(), reset_at_ms :: integer()) :: :ok
   def update_global(limit, remaining, reset_at_ms)
       when is_integer(limit) and is_integer(remaining) and is_integer(reset_at_ms) do
-    key = "#{@key_prefix}:global"
+    key = global_key()
     bucket = ""
 
     redis_command([
@@ -148,6 +154,9 @@ defmodule Prism.RateLimitBucket do
 
   @doc false
   def bucket_key(webhook_id, method), do: "#{@key_prefix}:#{webhook_id}:#{method}"
+
+  @doc false
+  def global_key, do: "#{@key_prefix}:global"
 
   defp redis_command(command) do
     idx = :erlang.phash2(System.unique_integer(), 5)
