@@ -68,6 +68,7 @@ defmodule Prism.Application do
           },
           {Prism.Backpressure, []},
           {Prism.DelayedScheduler, []},
+          {Prism.StreamTrimmer, []},
           Supervisor.child_spec(
             {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Fast, lane: :fast]},
             id: :fanout_broadway_fast

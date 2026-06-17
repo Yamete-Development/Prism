@@ -6,6 +6,79 @@ defmodule Prism.FanoutBroadway do
 
   alias Broadway.Message
 
+  # Key expansion mapping: short → long. Applied to decoded JSON from the Python
+  # publisher to reverse the minification that reduces Redis stream memory.
+  # Keys not in this map pass through unchanged for backward compatibility.
+  @key_map %{
+    # Top-level
+    "a" => "action",
+    "b" => "batch_id",
+    "m" => "message_id",
+    "s" => "shard_index",
+    "h" => "hub_id",
+    "n" => "hub_name",
+    "p" => "payload",
+    "t" => "targets",
+    "d" => "metadata",
+    "r" => "trace_headers",
+    # Target
+    "c" => "channel_id",
+    "w" => "webhook_id",
+    "k" => "webhook_token",
+    "g" => "guild_id",
+    "f" => "thread_id",
+    "o" => "overrides",
+    "ci" => "connection_id",
+    # Payload body
+    "u" => "username",
+    "v" => "avatar_url",
+    "x" => "content",
+    "e" => "embeds",
+    "q" => "components",
+    "l" => "allowed_mentions",
+    "fl" => "flags",
+    # Metadata
+    "ai" => "author_id",
+    "gn" => "guild_name",
+    "bg" => "badges",
+  }
+
+  @doc """
+  Recursively expands minified JSON keys back to their full names.
+  If the payload is already in long-key format (e.g. key \"action\" is present
+  and is not a known short key), it passes through unchanged for backward
+  compatibility with older Python publishers.
+  """
+  def expand_keys(map) when is_map(map) do
+    # Detect format: if the first key maps to a known long key, expand.
+    first_key =
+      map
+      |> Map.keys()
+      |> Enum.find(fn _ -> true end)
+
+    is_minified = first_key && Map.has_key?(@key_map, first_key)
+
+    if is_minified do
+      map
+      |> Enum.reduce(%{}, fn {key, value}, acc ->
+        long_key = Map.get(@key_map, key, key)
+
+        expanded_value =
+          cond do
+            is_map(value) -> expand_keys(value)
+            is_list(value) -> Enum.map(value, fn item -> if is_map(item), do: expand_keys(item), else: item end)
+            true -> value
+          end
+
+        Map.put(acc, long_key, expanded_value)
+      end)
+    else
+      map
+    end
+  end
+
+  def expand_keys(value), do: value
+
   def start_link(opts) do
     lane = Keyword.fetch!(opts, :lane)
     name = Keyword.get(opts, :name, __MODULE__)
@@ -87,7 +160,12 @@ defmodule Prism.FanoutBroadway do
     payload_json = get_payload_from_redis_data(fields)
 
     case Jason.decode(payload_json) do
-      {:ok, %{"batch_id" => batch_id, "targets" => targets} = payload} ->
+      {:ok, raw} ->
+        # Expand minified keys to full names for downstream processing.
+        # If the payload is already in long-key format, expand_keys is a no-op.
+        payload = expand_keys(raw)
+
+        %{"batch_id" => batch_id, "targets" => targets} = payload
         action = Map.get(payload, "action", "execute")
         discord_payload = Map.get(payload, "payload", %{})
         parent_message_id = Map.get(payload, "message_id")

@@ -59,6 +59,46 @@ To dispatch messages, push JSON payloads to your configured Redis stream (e.g., 
 ### Overrides Mechanism
 Prism acts as a generic router. It takes the base `payload` and does a shallow merge with a target's `overrides` dictionary before executing the HTTP request. This allows you to efficiently send identical messages to 99% of targets while sending slight variations (e.g., custom pings or components) to specific targets within the same batch.
 
+### Wire Format (Minified)
+
+To reduce Redis stream memory usage, the Python publisher minifies all JSON keys to 1-2 character codes. The Elixir consumer automatically expands them back to full names before processing. Publishers and consumers can safely mix old (long key) and new (short key) formats during deployment.
+
+| Long key | Short key | Level |
+|---|---|---|
+| `action` | `a` | root |
+| `batch_id` | `b` | root |
+| `message_id` | `m` | root / target |
+| `shard_index` | `s` | root |
+| `hub_id` | `h` | root / target |
+| `hub_name` | `n` | root |
+| `payload` | `p` | root |
+| `targets` | `t` | root |
+| `metadata` | `d` | root |
+| `trace_headers` | `r` | root |
+| `channel_id` | `c` | target |
+| `webhook_id` | `w` | target |
+| `webhook_token` | `k` | target |
+| `guild_id` | `g` | target / metadata |
+| `thread_id` | `f` | target |
+| `overrides` | `o` | target |
+| `connection_id` | `ci` | target |
+| `username` | `u` | payload |
+| `avatar_url` | `v` | payload |
+| `content` | `x` | payload |
+| `embeds` | `e` | payload |
+| `components` | `q` | payload |
+| `allowed_mentions` | `l` | payload |
+| `flags` | `fl` | payload |
+| `author_id` | `ai` | metadata |
+| `guild_name` | `gn` | metadata |
+| `badges` | `bg` | metadata |
+
+Short keys that appear at multiple nesting levels (e.g. `m` for `message_id` at root and target level) are safe because JSON keys are scoped to their parent object.
+
+The authoritative mapping lives in the source:
+- Python: `apps/bot/services/prism/client.py` → `KEY_MAP`
+- Elixir: `lib/prism/fanout_broadway.ex` → `@key_map`
+
 ---
 
 ## Callbacks (Output Stream)
