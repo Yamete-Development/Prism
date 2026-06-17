@@ -547,7 +547,7 @@ defmodule Prism.DiscordWorker do
       callback_stream =
         Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
 
-      redix_command(["XADD", callback_stream, "*", "payload", json])
+      redix_command(["XADD", callback_stream, "MAXLEN", "~", "100000", "*", "payload", json])
     end
   end
 

@@ -37,7 +37,7 @@ config :prism,
   callback_include_parent_message_id:
     parse_bool.(System.get_env("PRISM_INCLUDE_PARENT_MESSAGE_ID")),
   reply_index_enabled: parse_bool.(System.get_env("PRISM_REPLY_INDEX_ENABLED")),
-  reply_index_prefix: System.get_env("PRISM_REPLY_INDEX_PREFIX") || "prism:delivery",
+  reply_index_prefix: System.get_env("PRISM_REPLY_INDEX_PREFIX") || "p:d",
   reply_index_ttl_seconds:
     String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800"),
   redis_sse_enabled: parse_bool.(System.get_env("PRISM_REDIS_SSE_ENABLED") || "false"),

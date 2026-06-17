@@ -396,7 +396,7 @@ defmodule Prism.FanoutBroadway do
         Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
 
       idx = :erlang.phash2(System.unique_integer(), 5)
-      Redix.command(:"my_redix_#{idx}", ["XADD", callback_stream, "*", "payload", payload])
+      Redix.command(:"my_redix_#{idx}", ["XADD", callback_stream, "MAXLEN", "~", "100000", "*", "payload", payload])
       Logger.debug("Published callback to #{callback_stream} for batch #{batch_id}#{parent_log}")
 
       # Send a real-time event via :pg for the dashboard to render
@@ -469,7 +469,7 @@ defmodule Prism.FanoutBroadway do
   end
 
   defp store_reply_index(parent_message_id, successes) when is_binary(parent_message_id) do
-    reply_index_prefix = Application.get_env(:prism, :reply_index_prefix, "prism:delivery")
+    reply_index_prefix = Application.get_env(:prism, :reply_index_prefix, "p:d")
 
     reply_index_ttl =
       Integer.to_string(Application.get_env(:prism, :reply_index_ttl_seconds, 604_800))
