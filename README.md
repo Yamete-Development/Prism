@@ -40,6 +40,9 @@ Configuration is handled dynamically via environment variables. See the provided
 | `MAX_BATCHES_PER_SEC` | Rate limit control. 1 batch = up to 80 targets. | `5` |
 | `PRISM_BROADWAY_CONCURRENCY` | Maximum number of batches processed concurrently per lane. | `50` |
 | `PRISM_BATCH_MAX_CONCURRENCY` | Maximum concurrent HTTP requests fired per batch. | `80` |
+| `PRISM_BACKPRESSURE_ENABLED` | Per-node Cloudflare IP-block cooldown. When a 429 is received, the worker sleeps between batches until the cooldown expires. Set to `false` to disable. | `true` |
+| `PRISM_RETRY_MAX_BATCHES_PER_SEC` | Rate limit (batches/sec) for the background retry pipeline. | `50` |
+| `PRISM_RETRY_BROADWAY_CONCURRENCY` | Max concurrent batches for the background retry pipeline. | `50` |
 | `PRISM_INCLUDE_PARENT_MESSAGE_ID` | Include the root message ID in execute callbacks. | `true` |
 | `PRISM_REPLY_INDEX_ENABLED` | Persist the durable Redis reply index for execute callbacks. | `true` |
 | `PRISM_REPLY_INDEX_PREFIX` | Redis key prefix used for reply delivery state. | `p:d` |
