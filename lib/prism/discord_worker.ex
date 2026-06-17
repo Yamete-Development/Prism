@@ -65,7 +65,7 @@ defmodule Prism.DiscordWorker do
         else
           # Pre-flight rate-limit check
           {should_defer, should_sleep, rate_limit_delay_ms} =
-            case Prism.RateLimitBucket.acquire(webhook_id, method_str) do
+            case Prism.RateLimit.check(webhook_id, method_str) do
               {:ok, _remaining} -> {false, false, 0}
               {:blocked, ttl_ms} when ttl_ms > 10000 -> {true, false, ttl_ms}
               {:blocked, ttl_ms} -> {false, true, ttl_ms}
@@ -284,7 +284,7 @@ defmodule Prism.DiscordWorker do
   def process_retry(payload, _polled_at, _enqueued_at) do
     action = payload["action"]
     target = payload["target"]
-    method = String.to_existing_atom(payload["method"])
+    method = safe_method_atom(payload["method"])
     method_str = to_string(method)
     url = payload["url"]
     headers = payload["headers"] |> Enum.to_list()
@@ -294,7 +294,7 @@ defmodule Prism.DiscordWorker do
     batch_id = payload["batch_id"]
     attempt = payload["attempt"]
     parent_msg_id = payload["parent_msg_id"]
-    reason = String.to_existing_atom(payload["reason"])
+    reason = payload["reason"]
 
     reason_str = if reason, do: " (Reason: #{reason})", else: ""
 
@@ -412,7 +412,7 @@ defmodule Prism.DiscordWorker do
 
       {:ok, msg_id} ->
         Logger.info("Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!")
-        Prism.Backpressure.record_success()
+        Prism.RateLimit.record_success()
 
         if batch_id do
           checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
@@ -577,19 +577,12 @@ defmodule Prism.DiscordWorker do
     case Finch.build(method, url, headers, body)
          |> Finch.request(DiscordFinch, receive_timeout: 30_000, pool_timeout: 30_000) do
       {:ok, %{status: status, body: resp_body, headers: headers}} when status in 200..299 ->
-        limit = extract_int_header(headers, "x-ratelimit-limit")
-        remaining = extract_int_header(headers, "x-ratelimit-remaining")
-        reset_after_sec = extract_float_header(headers, "x-ratelimit-reset-after")
-
-        if limit && remaining != nil && reset_after_sec do
-          reset_at_ms = now_ms() + trunc(reset_after_sec * 1000)
-          Prism.RateLimitBucket.update(webhook_id, method_str, limit, remaining, reset_at_ms)
-        end
+        Prism.RateLimit.handle_response(webhook_id, method_str, status, headers, resp_body)
 
         if method == :post do
           case Jason.decode(resp_body) do
             {:ok, %{"id" => msg_id}} ->
-              Prism.Backpressure.record_success()
+              Prism.RateLimit.record_success()
               {:ok, msg_id}
 
             {:ok, parsed} ->
@@ -611,75 +604,16 @@ defmodule Prism.DiscordWorker do
         end
 
       {:ok, %{status: 429, body: resp_body, headers: headers}} ->
-        {retry_after_ms, is_cloudflare, is_global} =
-          case Jason.decode(resp_body) do
-            {:ok, parsed} when is_map(parsed) ->
-              retry_after_ms =
-                case Map.get(parsed, "retry_after") do
-                  val when is_number(val) ->
-                    trunc(val * 1000)
-
-                  _ ->
-                    case extract_float_header(headers, "retry-after") do
-                      val when is_number(val) -> trunc(val * 1000)
-                      _ -> 5000
-                    end
-                end
-
-              is_global =
-                Map.get(parsed, "global", false) == true or
-                  Map.get(parsed, "code") == 0 or
-                  String.contains?(String.downcase(Map.get(parsed, "message", "")), "global rate limits")
-
-              {retry_after_ms, false, is_global}
-
-            _ ->
-              # Cloudflare / non-JSON response — read the HTTP retry-after header (in seconds)
-              cf_delay =
-                case extract_float_header(headers, "retry-after") do
-                  val when is_number(val) -> trunc(val * 1000)
-                  _ -> 5000
-                end
-
-              {cf_delay, true, false}
-          end
-
-        bucket =
-          Enum.find_value(headers, fn {k, v} ->
-            if String.downcase(k) == "x-ratelimit-bucket", do: v
-          end)
-
-        scope =
-          Enum.find_value(headers, fn {k, v} ->
-            if String.downcase(k) == "x-ratelimit-scope", do: v
-          end)
-
-        global_header =
-          Enum.find_value(headers, fn {k, v} ->
-            if String.downcase(k) == "x-ratelimit-global", do: v
-          end)
-
-        is_global_limit = is_global or global_header == "true" or scope == "global"
+        {:error, parsed} =
+          Prism.RateLimit.handle_response(webhook_id, method_str, 429, headers, resp_body)
 
         Logger.info(
-          "Rate limited on webhook_id=#{webhook_id} - Delay: #{retry_after_ms}ms | Scope: #{scope || "unknown"} | Bucket: #{bucket || "unknown"} | Global: #{is_global_limit} | Cloudflare: #{is_cloudflare}"
+          "Rate limited on webhook_id=#{webhook_id} - Delay: #{parsed.retry_after_ms}ms | " <>
+            "Scope: #{parsed.scope || "unknown"} | Bucket: #{parsed.bucket || "unknown"} | " <>
+            "Global: #{parsed.is_global} | Cloudflare: #{parsed.is_cloudflare}"
         )
 
-        if not is_cloudflare do
-          limit = extract_int_header(headers, "x-ratelimit-limit") || 5
-          reset_at_ms = now_ms() + retry_after_ms
-
-          if is_global_limit do
-            Logger.debug("Caching global rate limit for #{retry_after_ms}ms")
-            Prism.RateLimitBucket.update_global(limit, 0, reset_at_ms)
-          else
-            Prism.RateLimitBucket.update(webhook_id, method_str, limit, 0, reset_at_ms)
-          end
-        else
-          Prism.Backpressure.record_cloudflare_block(retry_after_ms)
-        end
-
-        {:error, {:rate_limited, retry_after_ms}}
+        {:error, {:rate_limited, parsed.retry_after_ms}}
 
       # ★ Permanent errors: 401, 403, 400
       {:ok, %{status: status, body: _resp_body}} when status in [401, 403] ->
@@ -742,27 +676,11 @@ defmodule Prism.DiscordWorker do
     end
   end
 
-  defp extract_int_header(headers, name) do
-    Enum.find_value(headers, fn {k, v} ->
-      if String.downcase(k) == name do
-        case Integer.parse(v) do
-          {n, _} -> n
-          :error -> nil
-        end
-      end
-    end)
+  defp safe_method_atom("post"), do: :post
+  defp safe_method_atom("patch"), do: :patch
+  defp safe_method_atom("delete"), do: :delete
+  defp safe_method_atom(other) do
+    Logger.warning("Unknown HTTP method in retry payload: #{inspect(other)}, defaulting to :post")
+    :post
   end
-
-  defp extract_float_header(headers, name) do
-    Enum.find_value(headers, fn {k, v} ->
-      if String.downcase(k) == name do
-        case Float.parse(v) do
-          {f, _} -> f
-          :error -> nil
-        end
-      end
-    end)
-  end
-
-  defp now_ms, do: System.monotonic_time(:millisecond)
 end

@@ -48,46 +48,58 @@ defmodule Prism.RetryBroadway do
 
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
-    if Application.get_env(:prism, :backpressure_enabled, true) do
-      case Prism.Backpressure.backoff_ms() do
-        ms when ms > 0 -> Process.sleep(ms)
-        _ -> :ok
+    if backpressure_enabled?() and Prism.RateLimit.unhealthy?() do
+      delay_ms = Prism.RateLimit.backoff_ms()
+      [_id, fields] = data
+      payload_json = get_payload_from_redis_data(fields)
+
+      with {:ok, raw} <- Jason.decode(payload_json) do
+        Prism.DelayedQueue.enqueue(raw, delay_ms)
+      else
+        _ ->
+          Logger.error(
+            "Failed to parse retry payload during backpressure: #{inspect(payload_json)}"
+          )
+
+          Message.failed(message, "invalid payload during backpressure")
       end
-    end
 
-    polled_at = :os.system_time(:millisecond)
-    # OffBroadwayRedisStream returns data as [entry_id, [field1, value1, ...]]
-    [id, fields] = data
+      message
+    else
+      polled_at = :os.system_time(:millisecond)
+      # OffBroadwayRedisStream returns data as [entry_id, [field1, value1, ...]]
+      [id, fields] = data
 
-    enqueued_at =
-      case String.split(id, "-") do
-        [timestamp_str, _] ->
-          case Integer.parse(timestamp_str) do
-            {ts, ""} -> ts
-            _ -> :os.system_time(:millisecond)
-          end
+      enqueued_at =
+        case String.split(id, "-") do
+          [timestamp_str, _] ->
+            case Integer.parse(timestamp_str) do
+              {ts, ""} -> ts
+              _ -> :os.system_time(:millisecond)
+            end
+
+          _ ->
+            :os.system_time(:millisecond)
+        end
+
+      payload_json = get_payload_from_redis_data(fields)
+
+      case Jason.decode(payload_json) do
+        {:ok, payload} ->
+          # The payload contains "action", "target", and potentially "payload" (for content)
+          # However, looking at the previous implementation, the retries loop took individual target payloads.
+          # Let's inspect what we pushed. DiscordWorker pushed a payload containing:
+          # action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt, reason
+          # We need to process it using DiscordWorker.
+
+          # It's better to pass it back to DiscordWorker's `process_retry` which we'll define.
+          Prism.DiscordWorker.process_retry(payload, polled_at, enqueued_at)
+          message
 
         _ ->
-          :os.system_time(:millisecond)
+          Logger.error("Failed to parse retry payload: #{inspect(payload_json)}")
+          Message.failed(message, "invalid payload")
       end
-
-    payload_json = get_payload_from_redis_data(fields)
-
-    case Jason.decode(payload_json) do
-      {:ok, payload} ->
-        # The payload contains "action", "target", and potentially "payload" (for content)
-        # However, looking at the previous implementation, the retries loop took individual target payloads.
-        # Let's inspect what we pushed. DiscordWorker pushed a payload containing:
-        # action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt, reason
-        # We need to process it using DiscordWorker.
-
-        # It's better to pass it back to DiscordWorker's `process_retry` which we'll define.
-        Prism.DiscordWorker.process_retry(payload, polled_at, enqueued_at)
-        message
-
-      _ ->
-        Logger.error("Failed to parse retry payload: #{inspect(payload_json)}")
-        Message.failed(message, "invalid payload")
     end
   end
 
@@ -101,4 +113,8 @@ defmodule Prism.RetryBroadway do
 
   defp get_payload_from_redis_data(%{"payload" => payload}), do: payload
   defp get_payload_from_redis_data(_), do: ""
+
+  defp backpressure_enabled? do
+    Application.get_env(:prism, :backpressure_enabled, true)
+  end
 end

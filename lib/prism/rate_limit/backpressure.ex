@@ -1,4 +1,4 @@
-defmodule Prism.Backpressure do
+defmodule Prism.RateLimit.Backpressure do
   @moduledoc """
   Per-node (local) backpressure for Cloudflare IP-level blocks.
 
@@ -32,34 +32,14 @@ defmodule Prism.Backpressure do
   @spec record_cloudflare_block(pos_integer()) :: :ok
   def record_cloudflare_block(retry_after_ms)
       when is_integer(retry_after_ms) and retry_after_ms > 0 do
-    ms = min(retry_after_ms, @max_backoff_ms)
-    until = System.monotonic_time(:millisecond) + ms
-
-    was_active = unhealthy?()
-    :persistent_term.put(@term_key, until)
-
-    unless was_active do
-      Logger.warning(
-        "[Backpressure] Cloudflare block detected (retry_after=#{retry_after_ms}ms). " <>
-          "Throttling for #{ms}ms to let healthy workers claim messages."
-      )
-    end
-
-    :ok
+    GenServer.cast(__MODULE__, {:block, retry_after_ms})
   end
 
   def record_cloudflare_block(_), do: :ok
 
   @spec record_success() :: :ok
   def record_success do
-    was_active = unhealthy?()
-    :persistent_term.put(@term_key, 0)
-
-    if was_active do
-      Logger.info("[Backpressure] Successful delivery detected. Backpressure released.")
-    end
-
-    :ok
+    GenServer.cast(__MODULE__, :success)
   end
 
   # ---------------------------------------------------------------------------
@@ -74,5 +54,35 @@ defmodule Prism.Backpressure do
   def init(_opts) do
     :persistent_term.put(@term_key, 0)
     {:ok, %{}}
+  end
+
+  @impl true
+  def handle_cast({:block, retry_after_ms}, state) do
+    ms = min(retry_after_ms, @max_backoff_ms)
+    until = System.monotonic_time(:millisecond) + ms
+
+    was_active = backoff_ms() > 0
+    :persistent_term.put(@term_key, until)
+
+    unless was_active do
+      Logger.warning(
+        "[Backpressure] Cloudflare block detected (retry_after=#{retry_after_ms}ms). " <>
+          "Throttling for #{ms}ms to let healthy workers claim messages."
+      )
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(:success, state) do
+    was_active = backoff_ms() > 0
+    :persistent_term.put(@term_key, 0)
+
+    if was_active do
+      Logger.info("[Backpressure] Successful delivery detected. Backpressure released.")
+    end
+
+    {:noreply, state}
   end
 end

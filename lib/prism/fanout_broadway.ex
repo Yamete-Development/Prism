@@ -137,8 +137,8 @@ defmodule Prism.FanoutBroadway do
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
     # If this worker is under a Cloudflare ban, re‑enqueue the batch and skip all network work
-    if backpressure_enabled?() and Prism.Backpressure.unhealthy?() do
-      delay_ms = Prism.Backpressure.backoff_ms()
+    if backpressure_enabled?() and Prism.RateLimit.unhealthy?() do
+      delay_ms = Prism.RateLimit.backoff_ms()
       [_id, fields] = data
       payload_json = get_payload_from_redis_data(fields)
 

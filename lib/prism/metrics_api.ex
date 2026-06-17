@@ -22,7 +22,11 @@ defmodule Prism.MetricsAPI do
 
   def handle_call(:get_metrics, _from, state) do
     # Just basic metrics for now
-    active_batches = :atomics.get(:persistent_term.get(:active_batches), 1)
+    active_batches =
+      case :persistent_term.get(:active_batches, nil) do
+        nil -> 0
+        ref -> :atomics.get(ref, 1)
+      end
 
     metrics = %{
       node: node(),

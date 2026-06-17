@@ -1,4 +1,4 @@
-defmodule Prism.RateLimitBucket do
+defmodule Prism.RateLimit.Bucket do
   @moduledoc """
   Per-worker rate-limit bucket backed by a Redis hash.
 
@@ -6,12 +6,12 @@ defmodule Prism.RateLimitBucket do
   `limit`, `remaining`, `reset_at`, and `bucket` per webhook+method combination.
   Uses Redis Lua scripting for atomic check-and-decrement operations.
 
-  Keys are scoped by a random `@worker_id` generated at compile time because
-  Prism sends webhook requests without an `Authorization` header.  Discord
-  therefore applies `X-RateLimit-Scope: user` and global rate limits to the
-  worker's IP address, *not* to the webhook token.  Sharing state across
-  workers on different IPs would cause one worker's 429 to falsely block
-  another worker that still has a clean bucket.
+  Keys are scoped by the runtime `:persistent_term.get(:prism_worker_id, "default")`
+  value set in `Prism.Application.start/2`.  Prism sends webhook requests without
+  an `Authorization` header, so Discord applies `X-RateLimit-Scope: user` and
+  global rate limits to the worker's IP address, *not* to the webhook token.
+  Sharing state across workers on different IPs would cause one worker's 429 to
+  falsely block another worker that still has a clean bucket.
   """
 
   require Logger
@@ -97,7 +97,7 @@ defmodule Prism.RateLimitBucket do
         {:blocked, ttl_ms}
 
       {:error, reason} ->
-        Logger.error("RateLimitBucket.acquire failed for #{key}: #{inspect(reason)}")
+        Logger.error("Bucket.acquire failed for #{key}: #{inspect(reason)}")
         {:ok, -1}
     end
   end
@@ -135,7 +135,7 @@ defmodule Prism.RateLimitBucket do
     |> case do
       {:ok, _} -> :ok
       {:error, reason} ->
-        Logger.error("RateLimitBucket.update failed for #{key}: #{inspect(reason)}")
+        Logger.error("Bucket.update failed for #{key}: #{inspect(reason)}")
         :ok
     end
   end
@@ -163,7 +163,7 @@ defmodule Prism.RateLimitBucket do
     |> case do
       {:ok, _} -> :ok
       {:error, reason} ->
-        Logger.error("RateLimitBucket.update_global failed: #{inspect(reason)}")
+        Logger.error("Bucket.update_global failed: #{inspect(reason)}")
         :ok
     end
   end
