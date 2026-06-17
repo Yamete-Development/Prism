@@ -42,60 +42,14 @@ defmodule Prism.DiscordWorker do
       body = if action == "delete", do: nil, else: Jason.encode_to_iodata!(content)
 
       checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
-      rl_key = "rl:#{webhook_id}"
-      global_rl_key = "rl:global"
+      method_str = action_to_method_string(action)
 
-      {cached_result, per_webhook_ttl, _global_ttl} =
+      cached_result =
         if batch_id do
-          case redix_pipeline([
-                 ["GET", checkpoint_key],
-                 ["PTTL", rl_key],
-                 ["PTTL", global_rl_key]
-               ]) do
-            {:ok, [get_res, pttl_res, global_pttl_res]} ->
-              cached =
-                case get_res do
-                  "done" -> {:ok, nil}
-                  msg_id when is_binary(msg_id) -> {:ok, msg_id}
-                  _ -> nil
-                end
-
-              ttl =
-                case pttl_res do
-                  ttl when is_integer(ttl) and ttl > 0 -> ttl
-                  _ -> 0
-                end
-
-              gttl =
-                case global_pttl_res do
-                  ttl when is_integer(ttl) and ttl > 0 -> ttl
-                  _ -> 0
-                end
-
-              {cached, ttl, gttl}
-
-            _ ->
-              {nil, 0, 0}
-          end
-        else
-          case redix_pipeline([["PTTL", rl_key], ["PTTL", global_rl_key]]) do
-            {:ok, [pttl_res, global_pttl_res]} ->
-              ttl =
-                case pttl_res do
-                  ttl when is_integer(ttl) and ttl > 0 -> ttl
-                  _ -> 0
-                end
-
-              gttl =
-                case global_pttl_res do
-                  ttl when is_integer(ttl) and ttl > 0 -> ttl
-                  _ -> 0
-                end
-
-              {nil, ttl, gttl}
-
-            _ ->
-              {nil, 0, 0}
+          case redix_command(["GET", checkpoint_key]) do
+            {:ok, "done"} -> {:ok, nil}
+            {:ok, msg_id} when is_binary(msg_id) -> {:ok, msg_id}
+            _ -> nil
           end
         end
 
@@ -109,18 +63,21 @@ defmodule Prism.DiscordWorker do
         if cached_result do
           cached_result
         else
-          # Only per-webhook rl:* keys represent real Discord route rate limits
-          # that should block HTTP requests. The rl:global key (set only by
-          # Discord's X-RateLimit-Global:true 429s) and Cloudflare IP blocks
-          # (which do NOT set any Redis key — they are IP-specific and must not
-          # contaminate workers on other IPs) are deliberately ignored here so
-          # the per-webhook bucket can still accept traffic.
-          should_defer = per_webhook_ttl > 10000
-          should_sleep = per_webhook_ttl > 0 and per_webhook_ttl <= 10000
+          # Pre-flight rate-limit check using bucket-state tracking.
+          # If the bucket is exhausted, defer (>10s TTL) or sleep (<=10s).
+          # Global rate limits and Cloudflare blocks are deliberately not
+          # checked here — global is IP-specific and Cloudflare uses local
+          # backpressure (Prism.Backpressure) instead of shared Redis.
+          {should_defer, should_sleep, rate_limit_delay_ms} =
+            case Prism.RateLimitBucket.acquire(webhook_id, method_str) do
+              {:ok, _remaining} -> {false, false, 0}
+              {:blocked, ttl_ms} when ttl_ms > 10000 -> {true, false, ttl_ms}
+              {:blocked, ttl_ms} -> {false, true, ttl_ms}
+            end
 
           if should_defer do
             Logger.debug(
-              "Pre-flight rate limit check triggered for webhook_id=#{webhook_id} with long TTL=#{per_webhook_ttl}ms. Rescheduling immediately."
+              "Pre-flight rate limit check triggered for webhook_id=#{webhook_id} with long TTL=#{rate_limit_delay_ms}ms. Rescheduling immediately."
             )
 
             parent_msg_id = if action == "execute", do: parent_message_id, else: nil
@@ -137,7 +94,7 @@ defmodule Prism.DiscordWorker do
                   webhook_id,
                   message_id,
                   batch_id,
-                  per_webhook_ttl,
+                  rate_limit_delay_ms,
                   1,
                   parent_msg_id,
                   :rate_limited
@@ -151,17 +108,17 @@ defmodule Prism.DiscordWorker do
           else
             if should_sleep do
               Logger.debug(
-                "Pre-flight rate limit check triggered for webhook_id=#{webhook_id}. Sleeping for #{per_webhook_ttl}ms."
+                "Pre-flight rate limit check triggered for webhook_id=#{webhook_id}. Sleeping for #{rate_limit_delay_ms}ms."
               )
 
-              Process.sleep(per_webhook_ttl)
+              Process.sleep(rate_limit_delay_ms)
             end
 
             case build_request(action, base_url, message_id, thread_id) do
               {:ok, method, url} ->
                 req_start = System.monotonic_time(:millisecond)
                 req_start_wall = :os.system_time(:millisecond)
-                result = do_http_request(method, url, headers, body, webhook_id, message_id)
+                result = do_http_request(method, method_str, url, headers, body, webhook_id, message_id)
                 req_end = System.monotonic_time(:millisecond)
                 req_end_wall = :os.system_time(:millisecond)
 
@@ -315,15 +272,16 @@ defmodule Prism.DiscordWorker do
     Redix.command(:"my_redix_#{idx}", command)
   end
 
-  defp redix_pipeline(commands) do
-    idx = :erlang.phash2(System.unique_integer(), 5)
-    Redix.pipeline(:"my_redix_#{idx}", commands)
-  end
+  defp action_to_method_string("execute"), do: "post"
+  defp action_to_method_string("edit"), do: "patch"
+  defp action_to_method_string("delete"), do: "delete"
+  defp action_to_method_string(_), do: "post"
 
   def process_retry(payload, _polled_at, _enqueued_at) do
     action = payload["action"]
     target = payload["target"]
     method = String.to_existing_atom(payload["method"])
+    method_str = to_string(method)
     url = payload["url"]
     headers = payload["headers"] |> Enum.to_list()
     body = payload["body"]
@@ -340,7 +298,7 @@ defmodule Prism.DiscordWorker do
       "Retrying webhook_id=#{webhook_id} (Attempt #{attempt})#{reason_str} in Broadway pipeline..."
     )
 
-    result = do_http_request(method, url, headers, body, webhook_id, message_id)
+    result = do_http_request(method, method_str, url, headers, body, webhook_id, message_id)
 
     case result do
       {:error, {:rate_limited, delay_ms}} ->
@@ -574,14 +532,14 @@ defmodule Prism.DiscordWorker do
     {:error, :invalid_action}
   end
 
-  defp do_http_request(method, url, headers, body, webhook_id, message_id) do
+  defp do_http_request(method, method_str, url, headers, body, webhook_id, message_id) do
     OpenTelemetry.Tracer.with_span "prism.worker.http_request" do
       OpenTelemetry.Tracer.set_attributes([
         {:http_method, to_string(method)},
         {:webhook_id, webhook_id}
       ])
 
-      result = do_http_request_internal(method, url, headers, body, webhook_id, message_id)
+      result = do_http_request_internal(method, method_str, url, headers, body, webhook_id, message_id)
 
       case result do
         {:ok, _} ->
@@ -601,35 +559,20 @@ defmodule Prism.DiscordWorker do
     end
   end
 
-  defp do_http_request_internal(method, url, headers, body, webhook_id, _message_id) do
+  defp do_http_request_internal(method, method_str, url, headers, body, webhook_id, _message_id) do
     case Finch.build(method, url, headers, body)
          |> Finch.request(DiscordFinch, receive_timeout: 30_000, pool_timeout: 30_000) do
       {:ok, %{status: status, body: resp_body, headers: headers}} when status in 200..299 ->
-        # Traffic shaping: record if bucket is empty
-        remaining =
-          Enum.find_value(headers, fn {k, v} ->
-            if String.downcase(k) == "x-ratelimit-remaining", do: v
-          end)
+        # Update bucket state on every response (not just remaining=0).
+        # This keeps the rate-limit state accurate at all times, matching
+        # the twilight RateLimiter pattern of feeding headers back on every response.
+        limit = extract_int_header(headers, "x-ratelimit-limit")
+        remaining = extract_int_header(headers, "x-ratelimit-remaining")
+        reset_after_sec = extract_float_header(headers, "x-ratelimit-reset-after")
 
-        if remaining == "0" do
-          reset_after_str =
-            Enum.find_value(headers, fn {k, v} ->
-              if String.downcase(k) == "x-ratelimit-reset-after", do: v
-            end)
-
-          if reset_after_str do
-            case Float.parse(reset_after_str) do
-              {reset_after_sec, _} ->
-                ttl_ms = trunc(reset_after_sec * 1000)
-
-                if ttl_ms > 0 do
-                  redix_command(["PSETEX", "rl:#{webhook_id}", Integer.to_string(ttl_ms), "1"])
-                end
-
-              :error ->
-                :ok
-            end
-          end
+        if limit && remaining != nil && reset_after_sec do
+          reset_at_ms = now_ms() + trunc(reset_after_sec * 1000)
+          Prism.RateLimitBucket.update(webhook_id, method_str, limit, remaining, reset_at_ms)
         end
 
         if method == :post do
@@ -663,7 +606,7 @@ defmodule Prism.DiscordWorker do
         #
         # Cloudflare blocks are IP-specific — they affect only THIS worker's
         # server, not other workers on different IPs. We must NOT cache them in
-        # shared Redis keys (rl:* or rl:global), because that would pollute
+        # shared rate-limit bucket keys, because that would pollute
         # workers on other IPs. The retry is already enqueued in the delayed
         # queue with the correct delay; that is sufficient for Cloudflare.
         {retry_after_ms, is_cloudflare, is_global} =
@@ -711,30 +654,22 @@ defmodule Prism.DiscordWorker do
           "Rate limited on webhook_id=#{webhook_id} - Delay: #{retry_after_ms}ms | Scope: #{scope || "unknown"} | Bucket: #{bucket || "unknown"} | Global: #{is_global_limit} | Cloudflare: #{is_cloudflare}"
         )
 
-        # Cache Discord rate limits in Redis so the pre-flight can defer future
-        # requests without wasting HTTP calls. Cloudflare blocks are NOT cached
-        # — they are IP-specific and would contaminate workers on other IPs that
-        # share the same Redis. The retry in the delayed queue is sufficient.
+        # Update bucket state for Discord rate limits so the pre-flight can
+        # block future requests without wasting HTTP calls.
+        # Cloudflare blocks are NOT cached in Redis — they are IP-specific and
+        # would contaminate workers on other IPs that share the same Redis.
+        # The retry in the delayed queue and local backpressure are sufficient.
         if not is_cloudflare do
-          capped_retry_after_ms = min(retry_after_ms, 3_600_000)
+          limit = extract_int_header(headers, "x-ratelimit-limit") || 5
+          reset_at_ms = now_ms() + retry_after_ms
 
-          if capped_retry_after_ms > 0 do
-            if is_global_limit do
-              Logger.debug("Caching global rate limit for #{capped_retry_after_ms}ms")
-              redix_command(["PSETEX", "rl:global", Integer.to_string(capped_retry_after_ms), "1"])
-            else
-              redix_command([
-                "PSETEX",
-                "rl:#{webhook_id}",
-                Integer.to_string(capped_retry_after_ms),
-                "1"
-              ])
-            end
+          if is_global_limit do
+            Logger.debug("Caching global rate limit for #{retry_after_ms}ms")
+            Prism.RateLimitBucket.update_global(limit, 0, reset_at_ms)
+          else
+            Prism.RateLimitBucket.update(webhook_id, method_str, limit, 0, reset_at_ms)
           end
         else
-          # Cloudflare IP block — record the exact retry_after so the worker
-          # throttles consumption proportionally. Healthy workers on other IPs
-          # will claim messages from the consumer group while this one sleeps.
           Prism.Backpressure.record_cloudflare_block(retry_after_ms)
         end
 
@@ -790,4 +725,28 @@ defmodule Prism.DiscordWorker do
         {:ok, nil}
     end
   end
+
+  defp extract_int_header(headers, name) do
+    Enum.find_value(headers, fn {k, v} ->
+      if String.downcase(k) == name do
+        case Integer.parse(v) do
+          {n, _} -> n
+          :error -> nil
+        end
+      end
+    end)
+  end
+
+  defp extract_float_header(headers, name) do
+    Enum.find_value(headers, fn {k, v} ->
+      if String.downcase(k) == name do
+        case Float.parse(v) do
+          {f, _} -> f
+          :error -> nil
+        end
+      end
+    end)
+  end
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
 end

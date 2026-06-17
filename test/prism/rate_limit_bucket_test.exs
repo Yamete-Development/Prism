@@ -1,0 +1,165 @@
+defmodule Prism.RateLimitBucketTest do
+  use ExUnit.Case, async: false
+
+  alias Prism.RateLimitBucket
+
+  @redis_uri "redis://localhost:6379"
+
+  setup do
+    # Ensure the Redix pool is available for rate_limit_bucket calls.
+    for i <- 0..4 do
+      case Redix.start_link(@redis_uri, name: :"my_redix_#{i}") do
+        {:ok, _} -> :ok
+        {:error, {:already_started, _}} -> :ok
+      end
+    end
+
+    # Build a standalone connection for direct Redis inspection.
+    {:ok, redix} = Redix.start_link(@redis_uri)
+
+    # Clean up rate-limit bucket keys from prior runs.
+    case Redix.command(redix, ["KEYS", "rl:b:*"]) do
+      {:ok, keys} when is_list(keys) and length(keys) > 0 ->
+        Redix.command!(redix, ["DEL" | keys])
+
+      _ ->
+        :ok
+    end
+
+    %{redix: redix}
+  end
+
+  describe "bucket_key/2" do
+    test "produces the correct prefix, webhook_id, and method" do
+      assert RateLimitBucket.bucket_key("abc123", "post") == "rl:b:abc123:post"
+      assert RateLimitBucket.bucket_key("abc123", "patch") == "rl:b:abc123:patch"
+      assert RateLimitBucket.bucket_key("abc123", "delete") == "rl:b:abc123:delete"
+    end
+  end
+
+  describe "acquire/2" do
+    test "allows the first request (no bucket state yet)" do
+      assert {:ok, -1} = RateLimitBucket.acquire("acq_first", "post")
+    end
+
+    test "decrements remaining across sequential calls", %{redix: redix} do
+      webhook = "acq_decr"
+      key = RateLimitBucket.bucket_key(webhook, "post")
+
+      # Simulate a prior update setting limit=3, remaining=3, window far ahead.
+      now_ms = System.monotonic_time(:millisecond)
+      Redix.command!(redix, ["HSET", key, "limit", "3", "remaining", "3", "reset_at", to_string(now_ms + 60000)])
+
+      assert {:ok, 2} = RateLimitBucket.acquire(webhook, "post")
+      assert {:ok, 1} = RateLimitBucket.acquire(webhook, "post")
+      assert {:ok, 0} = RateLimitBucket.acquire(webhook, "post")
+
+      # Fourth call: bucket exhausted.
+      {:blocked, ttl} = RateLimitBucket.acquire(webhook, "post")
+      assert ttl > 0
+    end
+
+    test "blocks when remaining=0 and window is still active", %{redix: redix} do
+      webhook = "acq_block"
+      key = RateLimitBucket.bucket_key(webhook, "post")
+      now_ms = System.monotonic_time(:millisecond)
+
+      Redix.command!(redix, ["HSET", key, "limit", "5", "remaining", "0", "reset_at", to_string(now_ms + 5000)])
+
+      assert {:blocked, ttl} = RateLimitBucket.acquire(webhook, "post")
+      assert ttl > 0
+      assert ttl <= 5000 + 100
+    end
+
+    test "resets and allows when the rate-limit window has expired", %{redix: redix} do
+      webhook = "acq_expire"
+      key = RateLimitBucket.bucket_key(webhook, "post")
+      now_ms = System.monotonic_time(:millisecond)
+
+      # Window expired 1 second ago.
+      Redix.command!(redix, ["HSET", key, "limit", "5", "remaining", "0", "reset_at", to_string(now_ms - 1000)])
+
+      assert {:ok, -1} = RateLimitBucket.acquire(webhook, "post")
+
+      # Key should be deleted after expired-state acquire.
+      refute Redix.command!(redix, ["EXISTS", key]) == 1
+    end
+
+    test "treats nil remaining as exhausted (defensive)", %{redix: redix} do
+      webhook = "acq_nil"
+      key = RateLimitBucket.bucket_key(webhook, "post")
+      now_ms = System.monotonic_time(:millisecond)
+
+      # Missing "remaining" field — should be treated as 0.
+      Redix.command!(redix, ["HSET", key, "limit", "5", "reset_at", to_string(now_ms + 10000)])
+
+      assert {:blocked, _} = RateLimitBucket.acquire(webhook, "post")
+    end
+  end
+
+  describe "update/5" do
+    test "sets all hash fields", %{redix: redix} do
+      webhook = "upd_fields"
+      key = RateLimitBucket.bucket_key(webhook, "post")
+      reset_at = System.monotonic_time(:millisecond) + 2000
+
+      RateLimitBucket.update(webhook, "post", 5, 3, reset_at)
+
+      assert Redix.command!(redix, ["HGET", key, "limit"]) == "5"
+      assert Redix.command!(redix, ["HGET", key, "remaining"]) == "3"
+      assert Redix.command!(redix, ["HGET", key, "reset_at"]) == to_string(reset_at)
+      assert Redix.command!(redix, ["HGET", key, "bucket"]) == ""
+    end
+
+    test "sets a TTL on the hash key", %{redix: redix} do
+      webhook = "upd_ttl"
+      key = RateLimitBucket.bucket_key(webhook, "post")
+      reset_at = System.monotonic_time(:millisecond) + 2000
+
+      RateLimitBucket.update(webhook, "post", 5, 1, reset_at)
+
+      ttl = Redix.command!(redix, ["TTL", key])
+      assert is_integer(ttl) and ttl > 0
+    end
+  end
+
+  describe "update_global/3" do
+    test "updates the global rate-limit key", %{redix: redix} do
+      global_key = "rl:b:global"
+      reset_at = System.monotonic_time(:millisecond) + 3000
+
+      RateLimitBucket.update_global(50, 0, reset_at)
+
+      assert Redix.command!(redix, ["HGET", global_key, "limit"]) == "50"
+      assert Redix.command!(redix, ["HGET", global_key, "remaining"]) == "0"
+      assert Redix.command!(redix, ["HGET", global_key, "reset_at"]) == to_string(reset_at)
+    end
+  end
+
+  describe "concurrent acquires" do
+    test "serialise through Redis: last caller is blocked", %{redix: redix} do
+      webhook = "acq_conc"
+      key = RateLimitBucket.bucket_key(webhook, "post")
+      now_ms = System.monotonic_time(:millisecond)
+
+      Redix.command!(redix, ["HSET", key, "limit", "3", "remaining", "3", "reset_at", to_string(now_ms + 60000)])
+
+      parent = self()
+
+      results =
+        1..5
+        |> Enum.map(fn _ ->
+          Task.async(fn ->
+            send(parent, {:result, RateLimitBucket.acquire(webhook, "post")})
+          end)
+        end)
+        |> Enum.map(&Task.await/1)
+
+      ok_count = Enum.count(results, &match?({:ok, _}, &1))
+      blocked_count = Enum.count(results, &match?({:blocked, _}, &1))
+
+      assert ok_count == 3
+      assert blocked_count == 2
+    end
+  end
+end
