@@ -59,30 +59,34 @@ defmodule Prism.FanoutBroadway do
     is_minified = first_key && Map.has_key?(@key_map, first_key)
 
     if is_minified do
-      map
-      |> Enum.reduce(%{}, fn {key, value}, acc ->
-        long_key = Map.get(@key_map, key, key)
-
-        expanded_value =
-          cond do
-            is_map(value) ->
-              expand_keys(value)
-
-            is_list(value) ->
-              Enum.map(value, fn item -> if is_map(item), do: expand_keys(item), else: item end)
-
-            true ->
-              value
-          end
-
-        Map.put(acc, long_key, expanded_value)
-      end)
+      do_expand_keys(map)
     else
       map
     end
   end
 
   def expand_keys(value), do: value
+
+  defp do_expand_keys(map) when is_map(map) do
+    map
+    |> Enum.reduce(%{}, fn {key, value}, acc ->
+      long_key = Map.get(@key_map, key, key)
+
+      expanded_value =
+        cond do
+          is_map(value) ->
+            do_expand_keys(value)
+
+          is_list(value) ->
+            Enum.map(value, fn item -> if is_map(item), do: do_expand_keys(item), else: item end)
+
+          true ->
+            value
+        end
+
+      Map.put(acc, long_key, expanded_value)
+    end)
+  end
 
   def start_link(opts) do
     lane = Keyword.fetch!(opts, :lane)
