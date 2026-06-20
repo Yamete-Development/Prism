@@ -54,7 +54,8 @@ defmodule Prism.RateLimit.Headers do
   or `nil` when any header is missing (the client does not update bucket state
   when Discord sends a partial response).
   """
-  @spec parse_2xx(headers :: keyword()) :: {limit :: integer(), remaining :: integer(), reset_at_ms :: integer()} | nil
+  @spec parse_2xx(headers :: keyword()) ::
+          {limit :: integer(), remaining :: integer(), reset_at_ms :: integer()} | nil
   def parse_2xx(headers) do
     limit = extract_int(headers, "x-ratelimit-limit")
     remaining = extract_int(headers, "x-ratelimit-remaining")
@@ -82,15 +83,15 @@ defmodule Prism.RateLimit.Headers do
   containing "global rate limits".
   """
   @spec parse_429(headers :: keyword(), body :: String.t()) :: %{
-    retry_after_ms: integer(),
-    is_cloudflare: boolean(),
-    is_global: boolean(),
-    limit: integer() | nil,
-    remaining: integer() | nil,
-    reset_at_ms: integer() | nil,
-    bucket: String.t() | nil,
-    scope: String.t() | nil
-  }
+          retry_after_ms: integer(),
+          is_cloudflare: boolean(),
+          is_global: boolean(),
+          limit: integer() | nil,
+          remaining: integer() | nil,
+          reset_at_ms: integer() | nil,
+          bucket: String.t() | nil,
+          scope: String.t() | nil
+        }
   def parse_429(headers, body) do
     {retry_after_ms, is_cloudflare, is_global} =
       case Jason.decode(body) do
@@ -158,5 +159,24 @@ defmodule Prism.RateLimit.Headers do
       bucket: bucket,
       scope: scope
     }
+  end
+
+  @doc """
+  Detects if a response is from Cloudflare by inspecting headers and body.
+  """
+  @spec cloudflare_response?(headers :: keyword() | map(), body :: String.t()) :: boolean()
+  def cloudflare_response?(headers, body) do
+    header_list = if is_map(headers), do: Map.to_list(headers), else: headers
+
+    has_cf_header =
+      Enum.any?(header_list, fn {k, v} ->
+        k_lower = String.downcase(to_string(k))
+        v_lower = String.downcase(to_string(v))
+        k_lower == "cf-ray" or (k_lower == "server" and String.contains?(v_lower, "cloudflare"))
+      end)
+
+    has_cf_body = String.contains?(String.downcase(body), "cloudflare")
+
+    has_cf_header or has_cf_body
   end
 end

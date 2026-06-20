@@ -133,7 +133,9 @@ defmodule Prism.RateLimit.Bucket do
       to_string(@hash_ttl_seconds)
     ])
     |> case do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, reason} ->
         Logger.error("Bucket.update failed for #{key}: #{inspect(reason)}")
         :ok
@@ -161,7 +163,9 @@ defmodule Prism.RateLimit.Bucket do
       to_string(@hash_ttl_seconds)
     ])
     |> case do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, reason} ->
         Logger.error("Bucket.update_global failed: #{inspect(reason)}")
         :ok

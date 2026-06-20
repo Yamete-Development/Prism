@@ -607,18 +607,33 @@ defmodule Prism.DiscordWorker do
         {:error, parsed} =
           Prism.RateLimit.handle_response(webhook_id, method_str, 429, headers, resp_body)
 
-        Logger.info(
-          "Rate limited on webhook_id=#{webhook_id} - Delay: #{parsed.retry_after_ms}ms | " <>
-            "Scope: #{parsed.scope || "unknown"} | Bucket: #{parsed.bucket || "unknown"} | " <>
-            "Global: #{parsed.is_global} | Cloudflare: #{parsed.is_cloudflare}"
-        )
+        if parsed.is_cloudflare do
+          Logger.error(
+            "Cloudflare IP-level block (429) on webhook_id=#{webhook_id}! " <>
+              "Delay: #{parsed.retry_after_ms}ms | Headers: #{inspect(headers)} | Body: #{resp_body}"
+          )
+        else
+          Logger.warning(
+            "Discord Rate Limited (429) on webhook_id=#{webhook_id}! " <>
+              "Method: #{method_str} | " <>
+              "Delay: #{parsed.retry_after_ms}ms | " <>
+              "Scope: #{parsed.scope || "unknown"} | Bucket: #{parsed.bucket || "unknown"} | " <>
+              "Global: #{parsed.is_global} | " <>
+              "Request Body: #{body} | " <>
+              "Response Body: #{resp_body} | " <>
+              "Response Headers: #{inspect(headers)}"
+          )
+        end
 
         {:error, {:rate_limited, parsed.retry_after_ms}}
 
       # ★ Permanent errors: 401, 403, 400
-      {:ok, %{status: status, body: _resp_body}} when status in [401, 403] ->
+      {:ok, %{status: status, body: resp_body, headers: headers}} when status in [401, 403] ->
+        is_cf = Prism.RateLimit.Headers.cloudflare_response?(headers, resp_body)
+
         Logger.warning(
-          "Permanent error #{status} for webhook_id=#{webhook_id} – token invalid or missing permissions. Dropping."
+          "Permanent error #{status} for webhook_id=#{webhook_id} – token invalid or missing permissions. " <>
+            "Cloudflare: #{is_cf} | Headers: #{inspect(headers)} | Body: #{resp_body}"
         )
 
         {:error, :permanent}
@@ -667,9 +682,10 @@ defmodule Prism.DiscordWorker do
         Logger.error("Network error for webhook_id=#{webhook_id}: #{inspect(reason)}")
         {:error, :network_error}
 
-      {:ok, %{status: status}} ->
+      {:ok, %{status: status, body: resp_body, headers: headers}} ->
         Logger.warning(
-          "Unexpected status #{status} for webhook_id=#{webhook_id}. Treating as done."
+          "Unexpected status #{status} for webhook_id=#{webhook_id}. " <>
+            "Headers: #{inspect(headers)} | Body: #{resp_body}"
         )
 
         {:ok, nil}
@@ -679,6 +695,7 @@ defmodule Prism.DiscordWorker do
   defp safe_method_atom("post"), do: :post
   defp safe_method_atom("patch"), do: :patch
   defp safe_method_atom("delete"), do: :delete
+
   defp safe_method_atom(other) do
     Logger.warning("Unknown HTTP method in retry payload: #{inspect(other)}, defaulting to :post")
     :post

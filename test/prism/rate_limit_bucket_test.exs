@@ -53,7 +53,17 @@ defmodule Prism.RateLimit.BucketTest do
 
       # Simulate a prior update setting limit=3, remaining=3, window far ahead.
       now_ms = System.monotonic_time(:millisecond)
-      Redix.command!(redix, ["HSET", key, "limit", "3", "remaining", "3", "reset_at", to_string(now_ms + 60000)])
+
+      Redix.command!(redix, [
+        "HSET",
+        key,
+        "limit",
+        "3",
+        "remaining",
+        "3",
+        "reset_at",
+        to_string(now_ms + 60000)
+      ])
 
       assert {:ok, 2} = Bucket.acquire(webhook, "post")
       assert {:ok, 1} = Bucket.acquire(webhook, "post")
@@ -69,7 +79,16 @@ defmodule Prism.RateLimit.BucketTest do
       key = Bucket.bucket_key(webhook, "post")
       now_ms = System.monotonic_time(:millisecond)
 
-      Redix.command!(redix, ["HSET", key, "limit", "5", "remaining", "0", "reset_at", to_string(now_ms + 5000)])
+      Redix.command!(redix, [
+        "HSET",
+        key,
+        "limit",
+        "5",
+        "remaining",
+        "0",
+        "reset_at",
+        to_string(now_ms + 5000)
+      ])
 
       assert {:blocked, ttl} = Bucket.acquire(webhook, "post")
       assert ttl > 0
@@ -82,7 +101,16 @@ defmodule Prism.RateLimit.BucketTest do
       now_ms = System.monotonic_time(:millisecond)
 
       # Window expired 1 second ago.
-      Redix.command!(redix, ["HSET", key, "limit", "5", "remaining", "0", "reset_at", to_string(now_ms - 1000)])
+      Redix.command!(redix, [
+        "HSET",
+        key,
+        "limit",
+        "5",
+        "remaining",
+        "0",
+        "reset_at",
+        to_string(now_ms - 1000)
+      ])
 
       assert {:ok, -1} = Bucket.acquire(webhook, "post")
 
@@ -106,7 +134,16 @@ defmodule Prism.RateLimit.BucketTest do
       global_key = Bucket.global_key()
       now_ms = System.monotonic_time(:millisecond)
 
-      Redix.command!(redix, ["HSET", global_key, "limit", "50", "remaining", "0", "reset_at", to_string(now_ms + 4000)])
+      Redix.command!(redix, [
+        "HSET",
+        global_key,
+        "limit",
+        "50",
+        "remaining",
+        "0",
+        "reset_at",
+        to_string(now_ms + 4000)
+      ])
 
       assert {:blocked, ttl} = Bucket.acquire(webhook, "post")
       assert ttl > 0
@@ -118,7 +155,16 @@ defmodule Prism.RateLimit.BucketTest do
       global_key = Bucket.global_key()
       now_ms = System.monotonic_time(:millisecond)
 
-      Redix.command!(redix, ["HSET", global_key, "limit", "50", "remaining", "0", "reset_at", to_string(now_ms - 1000)])
+      Redix.command!(redix, [
+        "HSET",
+        global_key,
+        "limit",
+        "50",
+        "remaining",
+        "0",
+        "reset_at",
+        to_string(now_ms - 1000)
+      ])
 
       assert {:ok, -1} = Bucket.acquire(webhook, "post")
       refute Redix.command!(redix, ["EXISTS", global_key]) == 1
@@ -170,7 +216,16 @@ defmodule Prism.RateLimit.BucketTest do
       key = Bucket.bucket_key(webhook, "post")
       now_ms = System.monotonic_time(:millisecond)
 
-      Redix.command!(redix, ["HSET", key, "limit", "3", "remaining", "3", "reset_at", to_string(now_ms + 60000)])
+      Redix.command!(redix, [
+        "HSET",
+        key,
+        "limit",
+        "3",
+        "remaining",
+        "3",
+        "reset_at",
+        to_string(now_ms + 60000)
+      ])
 
       results =
         1..5

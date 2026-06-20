@@ -11,13 +11,14 @@ defmodule Prism.Application do
 
     unless Node.alive?() do
       case Node.start(:prism, :shortnames) do
-        {:ok, _pid} -> 
+        {:ok, _pid} ->
           :ok
+
         {:error, reason} ->
           Logger.error("""
           [Prism] Failed to start Erlang distribution! 
           Reason: #{inspect(reason)}
-          
+
           This usually happens because 'epmd' (Erlang Port Mapper Daemon) is not running.
           Try running 'epmd -daemon' in your terminal before starting the application,
           or start the app with 'iex --sname prism -S mix'.
@@ -33,7 +34,10 @@ defmodule Prism.Application do
     :persistent_term.put(:active_batches, :atomics.new(1, signed: false))
 
     # Initialize worker ID at runtime to ensure unique Redis key scoping per host/IP
-    worker_id = System.get_env("PRISM_WORKER_ID") || (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
+    worker_id =
+      System.get_env("PRISM_WORKER_ID") ||
+        :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+
     :persistent_term.put(:prism_worker_id, worker_id)
 
     redis_opts = Application.get_env(:prism, :redis_opts, host: "localhost", port: 6379)
@@ -55,15 +59,18 @@ defmodule Prism.Application do
       if Node.alive?() do
         [{Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]}]
       else
-        Logger.warning("[Prism] Node is not alive (Erlang distribution offline). Skipping Cluster.Supervisor to avoid {:error, :address} crashes.")
+        Logger.warning(
+          "[Prism] Node is not alive (Erlang distribution offline). Skipping Cluster.Supervisor to avoid {:error, :address} crashes."
+        )
+
         []
       end ++
-      [
-        {Finch,
-         name: DiscordFinch, pools: %{"https://discord.com" => [protocols: [:http2], count: 20]}},
-        {Task.Supervisor, name: Prism.TaskSup},
-        {Prism.MetricsAPI, []}
-      ] ++
+        [
+          {Finch,
+           name: DiscordFinch, pools: %{"https://discord.com" => [protocols: [:http2], count: 20]}},
+          {Task.Supervisor, name: Prism.TaskSup},
+          {Prism.MetricsAPI, []}
+        ] ++
         redix_children ++
         [
           %{

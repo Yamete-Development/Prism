@@ -98,4 +98,12 @@ defmodule Prism.RateLimit do
   """
   @spec record_success() :: :ok
   def record_success, do: Backpressure.record_success()
+
+  @doc """
+  Directly records a Cloudflare block with the specified retry-after delay.
+  """
+  @spec record_cloudflare_block(retry_after_ms :: integer()) :: :ok
+  def record_cloudflare_block(retry_after_ms) do
+    Backpressure.record_cloudflare_block(retry_after_ms)
+  end
 end

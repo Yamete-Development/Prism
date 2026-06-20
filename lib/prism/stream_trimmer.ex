@@ -29,6 +29,7 @@ defmodule Prism.StreamTrimmer do
 
     stream_fast = Application.get_env(:prism, :redis_stream_fast, "discord:fanout:stream:fast")
     stream_slow = Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow")
+
     callback_stream =
       Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
 
@@ -36,10 +37,12 @@ defmodule Prism.StreamTrimmer do
     streams = [
       {stream_fast, fanout_group, "fast"},
       {stream_slow, fanout_group, "slow"},
-      {callback_stream, callback_group, "callbacks"},
+      {callback_stream, callback_group, "callbacks"}
     ]
 
-    Logger.info("[StreamTrimmer] Starting periodic trim every #{div(@trim_interval_ms, 1000)}s for #{length(streams)} streams")
+    Logger.info(
+      "[StreamTrimmer] Starting periodic trim every #{div(@trim_interval_ms, 1000)}s for #{length(streams)} streams"
+    )
 
     state = %{streams: streams}
 

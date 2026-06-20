@@ -10,7 +10,7 @@ defmodule Prism.FanoutBroadwayTest do
         "q" => [
           %{
             "type" => 17,
-            "accent_color" => 5793266,
+            "accent_color" => 5_793_266,
             "q" => [
               %{"type" => 10, "x" => "hello"}
             ]
@@ -25,7 +25,7 @@ defmodule Prism.FanoutBroadwayTest do
         "components" => [
           %{
             "type" => 17,
-            "accent_color" => 5793266,
+            "accent_color" => 5_793_266,
             "components" => [
               %{"type" => 10, "content" => "hello"}
             ]

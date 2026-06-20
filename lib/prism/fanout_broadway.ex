@@ -149,6 +149,14 @@ defmodule Prism.FanoutBroadway do
       # Decode, expand, and re‑enqueue the full batch payload with the remaining ban delay
       with {:ok, raw} <- Jason.decode(payload_json) do
         payload = expand_keys(raw)
+        batch_id = Map.get(payload, "batch_id", "unknown")
+        action = Map.get(payload, "action", "execute")
+
+        Logger.info(
+          "[Backpressure] Active Cloudflare block (remaining: #{delay_ms}ms). " <>
+            "Re-enqueueing #{action} batch #{batch_id} to delayed queue."
+        )
+
         Prism.DelayedQueue.enqueue(payload, delay_ms)
       end
 
