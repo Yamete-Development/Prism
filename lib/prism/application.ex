@@ -78,6 +78,7 @@ defmodule Prism.Application do
             start: {Redix.PubSub, :start_link, [Keyword.put(redis_opts, :name, Prism.PubSub)]}
           },
           {Prism.RateLimit.Backpressure, []},
+          {Prism.RateLimit.InvalidRequestTracker, []},
           {Prism.DelayedScheduler, []},
           {Prism.StreamTrimmer, []},
           Supervisor.child_spec(

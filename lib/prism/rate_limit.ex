@@ -7,7 +7,7 @@ defmodule Prism.RateLimit do
   `RetryBroadway`) import one module.
   """
 
-  alias Prism.RateLimit.{Bucket, Backpressure, Headers}
+  alias Prism.RateLimit.{Bucket, Backpressure, Headers, InvalidRequestTracker}
 
   @doc """
   Pre-flight check: atomically tests whether a webhook+method request is
@@ -60,15 +60,27 @@ defmodule Prism.RateLimit do
 
     if parsed.is_cloudflare do
       Backpressure.record_cloudflare_block(parsed.retry_after_ms)
+      InvalidRequestTracker.record_invalid()
     else
       if parsed.is_global do
         Bucket.update_global(parsed.limit, 0, parsed.reset_at_ms)
+        InvalidRequestTracker.record_invalid()
       else
         Bucket.update(webhook_id, method_str, parsed.limit, 0, parsed.reset_at_ms)
+
+        if parsed.scope != "shared" do
+          InvalidRequestTracker.record_invalid()
+        end
       end
     end
 
     {:error, parsed}
+  end
+
+  def handle_response(_webhook_id, _method_str, status, _headers, _body)
+      when status in [401, 403] do
+    InvalidRequestTracker.record_invalid()
+    :ok
   end
 
   def handle_response(_webhook_id, _method_str, _status, _headers, _body) do
@@ -76,11 +88,13 @@ defmodule Prism.RateLimit do
   end
 
   @doc """
-  Returns `true` when this worker is under a Cloudflare IP-level block and
-  should avoid making any outbound HTTP requests.
+  Returns `true` when this worker should avoid making any outbound HTTP
+  requests — either because of an active Cloudflare IP-level block or
+  because the invalid-request count is approaching Discord's 10 000/10 min
+  Cloudflare ban threshold.
   """
   @spec unhealthy?() :: boolean()
-  def unhealthy?, do: Backpressure.unhealthy?()
+  def unhealthy?, do: Backpressure.unhealthy?() or InvalidRequestTracker.approaching_limit?()
 
   @doc """
   Returns the remaining backoff duration in milliseconds.

@@ -50,11 +50,9 @@ defmodule Prism.DelayedQueue do
            json_payload
          ]) do
       {:ok, 1} ->
-        Logger.debug("Enqueued retry at #{execute_at_ms} (Earliest item)")
         :ok
 
       {:ok, 0} ->
-        Logger.debug("Enqueued retry at #{execute_at_ms}")
         :ok
 
       {:error, reason} ->
