@@ -55,6 +55,8 @@ defmodule Prism.Application do
       ]
     ]
 
+    finch_pool_count = Application.get_env(:prism, :finch_pool_count, 50)
+
     children =
       if Node.alive?() do
         [{Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]}]
@@ -67,7 +69,17 @@ defmodule Prism.Application do
       end ++
         [
           {Finch,
-           name: DiscordFinch, pools: %{"https://discord.com" => [protocols: [:http2], count: 20]}},
+           name: DiscordFinch,
+           pools: %{
+             "https://discord.com" => [
+               protocols: [:http2],
+               count: finch_pool_count,
+               conn_opts: [
+                 # Optional: configure Mint HTTP/2 transport opts
+                 # transport_opts: [keepalive: 30_000]
+               ]
+             ]
+           }},
           {Task.Supervisor, name: Prism.TaskSup},
           {Prism.MetricsAPI, []}
         ] ++
