@@ -30,8 +30,19 @@ defmodule Prism.DiscordWorker do
       thread_id = Map.get(target, "thread_id")
       message_id = Map.get(target, "message_id")
 
-      content =
-        if is_map(content) and action in ["execute", "edit"] do
+      dead_cache_hit =
+        action in ["edit", "delete"] and is_binary(message_id) and
+          dead_message_cached?(webhook_id, message_id)
+
+      if dead_cache_hit do
+        Logger.debug(
+          "Skipping #{action} for webhook_id=#{webhook_id} message_id=#{message_id} — known dead in cache"
+        )
+
+        if action == "delete", do: {:ok, nil}, else: {:error, :message_not_found}
+      else
+        content =
+          if is_map(content) and action in ["execute", "edit"] do
           overrides = Map.get(target, "overrides") || %{}
           Map.merge(content, overrides)
         else
@@ -282,6 +293,7 @@ defmodule Prism.DiscordWorker do
           end
         end
       end
+      end
     else
       Logger.warning("Invalid webhook data. Skipping.")
       {:error, :invalid_webhook}
@@ -351,7 +363,22 @@ defmodule Prism.DiscordWorker do
         :rate_limited
       )
     else
-      result = do_http_request(method, method_str, url, headers, body, webhook_id, message_id)
+      dead_cache_hit =
+        action in ["edit", "delete"] and is_binary(message_id) and
+          dead_message_cached?(webhook_id, message_id)
+
+      if dead_cache_hit do
+        Logger.debug(
+          "Retry skipping #{action} for webhook_id=#{webhook_id} message_id=#{message_id} — known dead in cache"
+        )
+
+        if action == "delete" do
+          publish_partial(action, target, batch_id, parent_msg_id, nil, nil)
+        else
+          publish_partial(action, target, batch_id, parent_msg_id, nil, :message_not_found)
+        end
+      else
+        result = do_http_request(method, method_str, url, headers, body, webhook_id, message_id)
 
       case result do
         {:error, {:rate_limited, delay_ms}} ->
@@ -474,6 +501,7 @@ defmodule Prism.DiscordWorker do
         other ->
           Logger.error("Unexpected retry result for webhook_id=#{webhook_id}: #{inspect(other)}")
           publish_partial(action, target, batch_id, parent_msg_id, nil, other)
+      end
       end
     end
   end
@@ -631,7 +659,7 @@ defmodule Prism.DiscordWorker do
     end
   end
 
-  defp do_http_request_internal(method, method_str, url, headers, body, webhook_id, _message_id) do
+  defp do_http_request_internal(method, method_str, url, headers, body, webhook_id, message_id) do
     case Finch.build(method, url, headers, body)
          |> Finch.request(DiscordFinch, receive_timeout: 30_000, pool_timeout: 30_000) do
       {:ok, %{status: status, body: resp_body, headers: headers}} when status in 200..299 ->
@@ -711,12 +739,16 @@ defmodule Prism.DiscordWorker do
                 "Webhook_id=#{webhook_id} returned 10008 on delete. Message already deleted, treating as success."
               )
 
+              if is_binary(message_id), do: cache_dead_message(webhook_id, message_id)
+              Prism.RateLimit.InvalidRequestTracker.record_invalid()
               {:ok, nil}
             else
               Logger.info(
                 "Webhook_id=#{webhook_id} returned 10008 on #{method}. Target message not found (deleted)."
               )
 
+              if is_binary(message_id), do: cache_dead_message(webhook_id, message_id)
+              Prism.RateLimit.InvalidRequestTracker.record_invalid()
               {:error, :message_not_found}
             end
 
@@ -725,10 +757,12 @@ defmodule Prism.DiscordWorker do
               "Dropping webhook_id=#{webhook_id} status=404 body=#{resp_body} (invalid webhook)"
             )
 
+            Prism.RateLimit.InvalidRequestTracker.record_invalid()
             {:error, :invalid_webhook}
 
           _ ->
             Logger.warning("Treating 404 as transient webhook_id=#{webhook_id} body=#{resp_body}")
+            Prism.RateLimit.InvalidRequestTracker.record_invalid()
             {:error, :network_error}
         end
 
@@ -757,5 +791,21 @@ defmodule Prism.DiscordWorker do
   defp safe_method_atom(other) do
     Logger.warning("Unknown HTTP method in retry payload: #{inspect(other)}, defaulting to :post")
     :post
+  end
+
+  defp dead_message_cached?(webhook_id, message_id) do
+    case redix_command(["EXISTS", "dead_msg:#{webhook_id}:#{message_id}"]) do
+      {:ok, 1} -> true
+      _ -> false
+    end
+  end
+
+  defp cache_dead_message(webhook_id, message_id, ttl_seconds \\ 1800) do
+    redix_command([
+      "SETEX",
+      "dead_msg:#{webhook_id}:#{message_id}",
+      to_string(ttl_seconds),
+      "1"
+    ])
   end
 end
