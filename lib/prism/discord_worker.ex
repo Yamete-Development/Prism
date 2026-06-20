@@ -329,7 +329,12 @@ defmodule Prism.DiscordWorker do
     method = safe_method_atom(payload["method"])
     method_str = to_string(method)
     url = payload["url"]
-    headers = payload["headers"] |> Enum.to_list()
+    headers =
+      case payload["headers"] do
+        nil -> []
+        map when is_map(map) -> Enum.to_list(map)
+        list when is_list(list) -> list
+      end
     body = payload["body"]
     webhook_id = payload["webhook_id"]
     message_id = payload["message_id"]

@@ -94,14 +94,14 @@ defmodule Prism.RetryBroadway do
 
       case Jason.decode(payload_json) do
         {:ok, payload} ->
-          # The payload contains "action", "target", and potentially "payload" (for content)
-          # However, looking at the previous implementation, the retries loop took individual target payloads.
-          # Let's inspect what we pushed. DiscordWorker pushed a payload containing:
-          # action, target, method, url, headers, body, webhook_id, message_id, batch_id, parent_msg_id, attempt, reason
-          # We need to process it using DiscordWorker.
+          if Map.has_key?(payload, "targets") do
+            # Batch payload from FanoutBroadway backpressure — route back to the
+            # appropriate fanout stream so it can be fanned out to individual targets.
+            route_batch_to_fanout(payload, payload_json)
+          else
+            Prism.DiscordWorker.process_retry(payload, polled_at, enqueued_at)
+          end
 
-          # It's better to pass it back to DiscordWorker's `process_retry` which we'll define.
-          Prism.DiscordWorker.process_retry(payload, polled_at, enqueued_at)
           message
 
         _ ->
@@ -121,6 +121,41 @@ defmodule Prism.RetryBroadway do
 
   defp get_payload_from_redis_data(%{"payload" => payload}), do: payload
   defp get_payload_from_redis_data(_), do: ""
+
+  # Routes a batch-level payload (containing "targets") back to the appropriate
+  # fanout stream so it can be fanned out to individual webhook targets.
+  #
+  # The batch payload arrives here when FanoutBroadway enqueues it to the delayed
+  # queue during Cloudflare backpressure. Once the delay expires and backpressure
+  # is cleared, we re-publish it to the fanout stream for normal processing.
+  defp route_batch_to_fanout(payload, payload_json) do
+    targets = Map.get(payload, "targets", [])
+    target_count = length(targets)
+    batch_id = Map.get(payload, "batch_id", "unknown")
+
+    stream_key =
+      if target_count > 80 do
+        Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow")
+      else
+        Application.get_env(:prism, :redis_stream_fast, "discord:fanout:stream:fast")
+      end
+
+    Logger.info(
+      "[RetryBroadway] Routing batch #{batch_id} (#{target_count} targets) back to fanout stream #{stream_key}"
+    )
+
+    idx = :erlang.phash2(System.unique_integer(), 5)
+
+    case Redix.command(:"my_redix_#{idx}", ["XADD", stream_key, "*", "payload", payload_json]) do
+      {:ok, _entry_id} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "[RetryBroadway] Failed to XADD batch #{batch_id} to #{stream_key}: #{inspect(reason)}"
+        )
+    end
+  end
 
   defp backpressure_enabled? do
     Application.get_env(:prism, :backpressure_enabled, true)
