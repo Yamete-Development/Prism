@@ -193,35 +193,43 @@ defmodule Prism.FanoutBroadway do
           metadata = Map.get(payload, "metadata", %{})
           hub_id = Map.get(payload, "hub_id")
 
-          shard_index = Map.get(payload, "shard_index", 0)
-          trace_headers = Map.get(payload, "trace_headers", %{}) |> Enum.to_list()
-
-          ctx = :otel_propagator_text_map.extract(trace_headers)
-          OpenTelemetry.Ctx.attach(ctx)
-
-          OpenTelemetry.Tracer.with_span "prism.worker.process_batch" do
-            OpenTelemetry.Tracer.set_attributes([
-              {:batch_id, batch_id},
-              {:action, action},
-              {:target_count, length(targets)},
-              {:shard_index, shard_index}
-            ])
-
-            process_batch(
-              action,
-              batch_id,
-              discord_payload,
-              targets,
-              polled_at,
-              enqueued_at,
-              parent_message_id,
-              metadata,
-              hub_id,
-              shard_index
+          if parent_message_id && Prism.CancelChecker.cancelled?(parent_message_id) do
+            Logger.info(
+              "FanoutBroadway: skipping cancelled batch batch_id=#{batch_id} message_id=#{parent_message_id}"
             )
-          end
 
-          message
+            message
+          else
+            shard_index = Map.get(payload, "shard_index", 0)
+            trace_headers = Map.get(payload, "trace_headers", %{}) |> Enum.to_list()
+
+            ctx = :otel_propagator_text_map.extract(trace_headers)
+            OpenTelemetry.Ctx.attach(ctx)
+
+            OpenTelemetry.Tracer.with_span "prism.worker.process_batch" do
+              OpenTelemetry.Tracer.set_attributes([
+                {:batch_id, batch_id},
+                {:action, action},
+                {:target_count, length(targets)},
+                {:shard_index, shard_index}
+              ])
+
+              process_batch(
+                action,
+                batch_id,
+                discord_payload,
+                targets,
+                polled_at,
+                enqueued_at,
+                parent_message_id,
+                metadata,
+                hub_id,
+                shard_index
+              )
+            end
+
+            message
+          end
 
         _ ->
           Logger.error("Failed to parse or invalid payload: #{inspect(payload_json)}")

@@ -21,6 +21,7 @@ redis_opts =
   end
 
 config :prism,
+  finch_pool_count: String.to_integer(System.get_env("PRISM_FINCH_POOL_COUNT") || "50"),
   redis_opts: redis_opts,
   redis_stream_fast: System.get_env("REDIS_STREAM_FAST") || "discord:fanout:stream:fast",
   redis_stream_slow: System.get_env("REDIS_STREAM_SLOW") || "discord:fanout:stream:slow",
@@ -42,7 +43,8 @@ config :prism,
     String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800"),
   redis_sse_enabled: parse_bool.(System.get_env("PRISM_REDIS_SSE_ENABLED") || "false"),
   redis_sse_topic_prefix:
-    System.get_env("PRISM_REDIS_SSE_TOPIC_PREFIX") || "dashboard:stream:hub:"
+    System.get_env("PRISM_REDIS_SSE_TOPIC_PREFIX") || "dashboard:stream:hub:",
+  cancel_ttl: String.to_integer(System.get_env("PRISM_CANCEL_TTL", "300"))
 
 config :opentelemetry,
   span_processor: :batch,
