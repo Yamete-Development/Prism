@@ -872,7 +872,11 @@ defmodule Prism.DiscordWorker do
   defp dead_message_cached?(webhook_id, message_id) do
     case redix_command(["EXISTS", "dead_msg:#{webhook_id}:#{message_id}"]) do
       {:ok, 1} -> true
-      _ -> false
+      _ ->
+        case redix_command(["EXISTS", "dead_msg:#{message_id}"]) do
+          {:ok, 1} -> true
+          _ -> false
+        end
     end
   end
 
