@@ -699,8 +699,15 @@ defmodule Prism.DiscordWorker do
   end
 
   defp do_http_request_internal(method, method_str, url, headers, body, webhook_id, message_id) do
-    case Finch.build(method, url, headers, body)
-         |> Finch.request(DiscordFinch, receive_timeout: 30_000, pool_timeout: 30_000) do
+    if empty_webhook_body?(body) do
+      Logger.warning(
+        "Skipping webhook_id=#{webhook_id} method=#{method_str} — empty payload (no content, embeds, or components)"
+      )
+
+      {:error, :empty_payload}
+    else
+      case Finch.build(method, url, headers, body)
+           |> Finch.request(DiscordFinch, receive_timeout: 30_000, pool_timeout: 10_000) do
       {:ok, %{status: status, body: resp_body, headers: headers}} when status in 200..299 ->
         Prism.RateLimit.handle_response(webhook_id, method_str, status, headers, resp_body)
 
@@ -821,7 +828,30 @@ defmodule Prism.DiscordWorker do
 
         {:ok, nil}
     end
+    end
   end
+
+  defp empty_webhook_body?(nil), do: true
+
+  defp empty_webhook_body?(body) do
+    case Jason.decode(body) do
+      {:ok, decoded} when is_map(decoded) ->
+        content = Map.get(decoded, "content")
+        embeds = Map.get(decoded, "embeds")
+        components = Map.get(decoded, "components")
+
+        (is_nil(content) or content == "") and
+          is_nil_or_empty?(embeds) and
+            is_nil_or_empty?(components)
+
+      _ ->
+        false
+    end
+  end
+
+  defp is_nil_or_empty?(nil), do: true
+  defp is_nil_or_empty?(list) when is_list(list), do: list == []
+  defp is_nil_or_empty?(_), do: false
 
   defp safe_method_atom("post"), do: :post
   defp safe_method_atom("patch"), do: :patch

@@ -74,9 +74,9 @@ defmodule Prism.Application do
              "https://discord.com" => [
                protocols: [:http2],
                count: finch_pool_count,
+               conn_max_idle_time: 60_000,
                conn_opts: [
-                 # Optional: configure Mint HTTP/2 transport opts
-                 # transport_opts: [keepalive: 30_000]
+                 transport_opts: [keepalive: 30_000]
                ]
              ]
            }},

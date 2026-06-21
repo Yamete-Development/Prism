@@ -214,18 +214,24 @@ defmodule Prism.FanoutBroadway do
                 {:shard_index, shard_index}
               ])
 
-              process_batch(
-                action,
-                batch_id,
-                discord_payload,
-                targets,
-                polled_at,
-                enqueued_at,
-                parent_message_id,
-                metadata,
-                hub_id,
-                shard_index
-              )
+              if action == "execute" and empty_discord_payload?(discord_payload) do
+                Logger.warning(
+                  "FanoutBroadway: skipping empty execute batch batch_id=#{batch_id} — no content, embeds, or components"
+                )
+              else
+                process_batch(
+                  action,
+                  batch_id,
+                  discord_payload,
+                  targets,
+                  polled_at,
+                  enqueued_at,
+                  parent_message_id,
+                  metadata,
+                  hub_id,
+                  shard_index
+                )
+              end
             end
 
             message
@@ -555,4 +561,20 @@ defmodule Prism.FanoutBroadway do
   defp backpressure_enabled? do
     Application.get_env(:prism, :backpressure_enabled, true)
   end
+
+  defp empty_discord_payload?(payload) when is_map(payload) do
+    content = Map.get(payload, "content")
+    embeds = Map.get(payload, "embeds")
+    components = Map.get(payload, "components")
+
+    (is_nil(content) or content == "") and
+      is_nil_or_empty_list?(embeds) and
+        is_nil_or_empty_list?(components)
+  end
+
+  defp empty_discord_payload?(_), do: true
+
+  defp is_nil_or_empty_list?(nil), do: true
+  defp is_nil_or_empty_list?(list) when is_list(list), do: list == []
+  defp is_nil_or_empty_list?(_), do: false
 end
