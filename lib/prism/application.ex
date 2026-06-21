@@ -32,9 +32,6 @@ defmodule Prism.Application do
       "[Prism] Starting up! Initializing Redix pool (5 conns) and Finch pool (#{finch_pool_count} conns)."
     )
 
-    # Initialize atomic counter for Broadway batches
-    :persistent_term.put(:active_batches, :atomics.new(1, signed: false))
-
     # Initialize worker ID at runtime to ensure unique Redis key scoping per host/IP
     worker_id =
       System.get_env("PRISM_WORKER_ID") ||

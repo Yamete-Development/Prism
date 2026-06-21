@@ -15,19 +15,13 @@ defmodule Prism.MetricsLogger do
 
   @impl true
   def handle_info(:log_metrics, state) do
-    task_count = Task.Supervisor.children(Prism.TaskSup) |> length()
+    batch_count = Supervisor.count_children(Prism.TaskSup).active
     process_count = length(:erlang.processes())
     run_queue = :erlang.statistics(:run_queue)
     port_count = length(:erlang.ports())
 
-    active_batches =
-      case :persistent_term.get(:active_batches, nil) do
-        nil -> 0
-        ref -> :atomics.get(ref, 1)
-      end
-
     Logger.info(
-      "[Metrics] Active Broadway Batches: #{active_batches} | Active Retries (TaskSup): #{task_count} | Erlang Processes: #{process_count} | Run Queue: #{run_queue} | Open Ports/Sockets: #{port_count} | Fast Stream Len: #{stream_length(Application.get_env(:prism, :redis_stream_fast, "discord:fanout:stream:fast"))} | Slow Stream Len: #{stream_length(Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow"))}"
+      "[Metrics] Active Broadway Batches: #{batch_count} | Erlang Processes: #{process_count} | Run Queue: #{run_queue} | Open Ports/Sockets: #{port_count} | Fast Stream Len: #{stream_length(Application.get_env(:prism, :redis_stream_fast, "discord:fanout:stream:fast"))} | Slow Stream Len: #{stream_length(Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow"))}"
     )
 
     {:noreply, state}

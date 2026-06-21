@@ -214,8 +214,7 @@ defmodule Prism.FanoutBroadway do
               )
             else
               max_async = Application.get_env(:prism, :max_async_batches, 300)
-              active_ref = :persistent_term.get(:active_batches, nil)
-              current = if active_ref, do: :atomics.get(active_ref, 1), else: 0
+              current = Supervisor.count_children(Prism.TaskSup).active
 
               if current < max_async do
                 spawn_async_batch(
@@ -289,10 +288,6 @@ defmodule Prism.FanoutBroadway do
       )
     end
 
-    if ref = :persistent_term.get(:active_batches, nil) do
-      :atomics.add(ref, 1, 1)
-    end
-
     batch_max_concurrency = Application.get_env(:prism, :batch_max_concurrency, 80)
 
     OpenTelemetry.Tracer.with_span "prism.worker.process_batch" do
@@ -303,240 +298,232 @@ defmodule Prism.FanoutBroadway do
         {:shard_index, shard_index}
       ])
 
-      try do
-        # Capture current context to propagate into child processes
-        ctx = OpenTelemetry.Ctx.get_current()
+      # Capture current context to propagate into child processes
+      ctx = OpenTelemetry.Ctx.get_current()
 
-        # Process targets with bounded concurrency and wait for completion
-        results =
-          Task.async_stream(
-            targets,
-            fn target ->
-              OpenTelemetry.Ctx.attach(ctx)
+      # Process targets with bounded concurrency and wait for completion
+      results =
+        Task.async_stream(
+          targets,
+          fn target ->
+            OpenTelemetry.Ctx.attach(ctx)
 
-              Prism.DiscordWorker.process_target(
-                action,
-                target,
-                discord_payload,
-                batch_id,
-                polled_at,
-                enqueued_at,
-                parent_message_id
-              )
-            end,
-            max_concurrency: batch_max_concurrency,
-            timeout: 60_000
-          )
-          |> Enum.to_list()
+            Prism.DiscordWorker.process_target(
+              action,
+              target,
+              discord_payload,
+              batch_id,
+              polled_at,
+              enqueued_at,
+              parent_message_id
+            )
+          end,
+          max_concurrency: batch_max_concurrency,
+          timeout: 60_000
+        )
+        |> Enum.to_list()
 
-        {successes, failures} =
-          targets
-          |> Enum.zip(results)
-          |> Enum.reduce({[], []}, fn {target, result_tuple}, {succ_acc, fail_acc} ->
-            # result_tuple from Task.async_stream is {:ok, worker_result} or {:exit, reason}
-            worker_result =
-              case result_tuple do
-                {:ok, res} -> res
-                _ -> {:error, :task_crashed}
-              end
-
-            webhook_id = Map.get(target, "webhook_id") || "unknown"
-            # Optional bot team identifiers that might be in the target
-            conn_id = Map.get(target, "connection_id")
-            hub_id = Map.get(target, "hub_id")
-            channel_id = Map.get(target, "channel_id")
-            guild_id = Map.get(target, "guild_id")
-
-            base_info = %{
-              "webhook_id" => webhook_id,
-              "connection_id" => conn_id,
-              "hub_id" => hub_id,
-              "channel_id" => channel_id,
-              "guild_id" => guild_id
-            }
-
-            # Clean up nil values so the JSON is tidy
-            base_info = :maps.filter(fn _, v -> v != nil end, base_info)
-
-            case worker_result do
-              {:ok, msg_id} ->
-                # msg_id might be nil for edit/delete
-                succ_info =
-                  if msg_id, do: Map.put(base_info, "message_id", msg_id), else: base_info
-
-                {[succ_info | succ_acc], fail_acc}
-
-              {:error, reason} ->
-                {error_string, error_type, extra} =
-                  case reason do
-                    {:rate_limited, retry_after_ms} ->
-                      {"rate_limited", "transient", %{"retry_after_ms" => retry_after_ms}}
-
-                    :invalid_webhook ->
-                      {"invalid_webhook", "permanent", %{}}
-
-                    :message_not_found ->
-                      {"message_not_found", "permanent", %{}}
-
-                    :bad_request ->
-                      {"bad_request", "transient", %{}}
-
-                    :missing_webhook ->
-                      {"missing_webhook", "permanent", %{}}
-
-                    :invalid_action ->
-                      {"invalid_action", "permanent", %{}}
-
-                    {:permanent, detail} ->
-                      {"permanent_error", "permanent", %{"detail" => inspect(detail)}}
-
-                    {:server_error, _} ->
-                      {"server_error", "transient", %{}}
-
-                    :network_error ->
-                      {"network_error", "transient", %{}}
-
-                    :rate_limited ->
-                      {"rate_limited", "transient", %{}}
-
-                    :task_crashed ->
-                      {"task_crashed", "transient", %{}}
-
-                    _ ->
-                      {inspect(reason), "transient", %{}}
-                  end
-
-                fail_info =
-                  base_info
-                  |> Map.put("error", error_string)
-                  |> Map.put("error_type", error_type)
-                  |> Map.merge(extra)
-
-                {succ_acc, [fail_info | fail_acc]}
+      {successes, failures} =
+        targets
+        |> Enum.zip(results)
+        |> Enum.reduce({[], []}, fn {target, result_tuple}, {succ_acc, fail_acc} ->
+          # result_tuple from Task.async_stream is {:ok, worker_result} or {:exit, reason}
+          worker_result =
+            case result_tuple do
+              {:ok, res} -> res
+              _ -> {:error, :task_crashed}
             end
-          end)
 
-        ok_count = length(successes)
-        fail_count = length(failures)
-        batch_time = :os.system_time(:millisecond) - polled_at
-        parent_log = if parent_message_id, do: " (Parent Msg: #{parent_message_id})", else: ""
+          webhook_id = Map.get(target, "webhook_id") || "unknown"
+          # Optional bot team identifiers that might be in the target
+          conn_id = Map.get(target, "connection_id")
+          hub_id = Map.get(target, "hub_id")
+          channel_id = Map.get(target, "channel_id")
+          guild_id = Map.get(target, "guild_id")
 
-        Logger.debug(
-          "Batch #{batch_id}#{parent_log} done in #{batch_time}ms: #{ok_count} ok, #{fail_count} unsuccessful"
-        )
+          base_info = %{
+            "webhook_id" => webhook_id,
+            "connection_id" => conn_id,
+            "hub_id" => hub_id,
+            "channel_id" => channel_id,
+            "guild_id" => guild_id
+          }
 
-        if action == "execute" and not is_nil(parent_message_id) and reply_index_enabled?() do
-          store_reply_index(parent_message_id, successes)
-        end
+          # Clean up nil values so the JSON is tidy
+          base_info = :maps.filter(fn _, v -> v != nil end, base_info)
 
-        new_trace_headers = :otel_propagator_text_map.inject([]) |> Enum.into(%{})
+          case worker_result do
+            {:ok, msg_id} ->
+              # msg_id might be nil for edit/delete
+              succ_info =
+                if msg_id, do: Map.put(base_info, "message_id", msg_id), else: base_info
 
-        payload_map = %{
-          batch_id: batch_id,
-          status: "success",
-          action: action,
-          # We map successes to message_ids list
-          message_ids: Enum.reverse(successes),
-          failures: Enum.reverse(failures),
-          trace_headers: new_trace_headers
-        }
+              {[succ_info | succ_acc], fail_acc}
 
-        payload_map =
-          if include_parent_message_id and parent_message_id do
-            Map.put(payload_map, :parent_message_id, parent_message_id)
-          else
-            payload_map
+            {:error, reason} ->
+              {error_string, error_type, extra} =
+                case reason do
+                  {:rate_limited, retry_after_ms} ->
+                    {"rate_limited", "transient", %{"retry_after_ms" => retry_after_ms}}
+
+                  :invalid_webhook ->
+                    {"invalid_webhook", "permanent", %{}}
+
+                  :message_not_found ->
+                    {"message_not_found", "permanent", %{}}
+
+                  :bad_request ->
+                    {"bad_request", "transient", %{}}
+
+                  :missing_webhook ->
+                    {"missing_webhook", "permanent", %{}}
+
+                  :invalid_action ->
+                    {"invalid_action", "permanent", %{}}
+
+                  {:permanent, detail} ->
+                    {"permanent_error", "permanent", %{"detail" => inspect(detail)}}
+
+                  {:server_error, _} ->
+                    {"server_error", "transient", %{}}
+
+                  :network_error ->
+                    {"network_error", "transient", %{}}
+
+                  :rate_limited ->
+                    {"rate_limited", "transient", %{}}
+
+                  :task_crashed ->
+                    {"task_crashed", "transient", %{}}
+
+                  _ ->
+                    {inspect(reason), "transient", %{}}
+                end
+
+              fail_info =
+                base_info
+                |> Map.put("error", error_string)
+                |> Map.put("error_type", error_type)
+                |> Map.merge(extra)
+
+              {succ_acc, [fail_info | fail_acc]}
           end
-
-        payload = Jason.encode!(payload_map)
-
-        callback_stream =
-          Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
-
-        idx = :erlang.phash2(System.unique_integer(), 5)
-
-        Redix.command(:"my_redix_#{idx}", [
-          "XADD",
-          callback_stream,
-          "MAXLEN",
-          "~",
-          "100000",
-          "*",
-          "payload",
-          payload
-        ])
-
-        Logger.debug(
-          "Published callback to #{callback_stream} for batch #{batch_id}#{parent_log}"
-        )
-
-        # Send a real-time event via :pg for the dashboard to render
-        event_data = %{
-          batch_id: batch_id,
-          action: action,
-          ok_count: ok_count,
-          fail_count: fail_count,
-          timestamp: :os.system_time(:millisecond)
-        }
-
-        event_data = Map.merge(event_data, payload_metadata || %{})
-
-        sse_enabled = Application.get_env(:prism, :redis_sse_enabled, false)
-
-        Logger.debug(
-          "SSE Evaluation -> enabled: #{sse_enabled}, action: #{action}, targets: #{length(targets)}, shard_index: #{shard_index}"
-        )
-
-        # Publish to Redis for web UI SSE streams if enabled
-        if sse_enabled and action == "execute" and length(targets) > 0 and shard_index == 0 do
-          first_target = hd(targets)
-
-          # Use root_hub_id if provided by the Python bot payload, else fallback to the target's hub_id
-          hub_id = root_hub_id || Map.get(first_target, "hub_id")
-
-          Logger.debug("SSE Extracted hub_id: #{inspect(hub_id)}")
-
-          if hub_id do
-            safe_metadata = payload_metadata || %{}
-
-            stream_payload =
-              %{
-                content: Map.get(discord_payload, "content", ""),
-                authorId: Map.get(safe_metadata, "author_id", ""),
-                guildId: Map.get(safe_metadata, "guild_id", ""),
-                authorName: Map.get(discord_payload, "username", "Unknown User"),
-                guildName: Map.get(safe_metadata, "guild_name", "Unknown Server"),
-                badges: Map.get(safe_metadata, "badges", []),
-                createdAt: DateTime.utc_now() |> DateTime.to_iso8601(),
-                id: parent_message_id || batch_id,
-                authorAvatarUrl: Map.get(discord_payload, "avatar_url", nil)
-              }
-              |> Jason.encode!()
-
-            sse_topic_prefix =
-              Application.get_env(:prism, :redis_sse_topic_prefix, "dashboard:stream:hub:")
-
-            idx = :erlang.phash2(System.unique_integer(), 5)
-
-            case Redix.command(:"my_redix_#{idx}", [
-                   "PUBLISH",
-                   "#{sse_topic_prefix}#{hub_id}",
-                   stream_payload
-                 ]) do
-              {:ok, _} -> Logger.debug("SSE Publish Success to #{sse_topic_prefix}#{hub_id}")
-              {:error, reason} -> Logger.error("SSE Publish Failed: #{inspect(reason)}")
-            end
-          end
-        end
-
-        Enum.each(:pg.get_members(:prism_events), fn pid ->
-          send(pid, {:batch_processed, event_data})
         end)
-      after
-        if ref = :persistent_term.get(:active_batches, nil) do
-          :atomics.sub(ref, 1, 1)
+
+      ok_count = length(successes)
+      fail_count = length(failures)
+      batch_time = :os.system_time(:millisecond) - polled_at
+      parent_log = if parent_message_id, do: " (Parent Msg: #{parent_message_id})", else: ""
+
+      Logger.debug(
+        "Batch #{batch_id}#{parent_log} done in #{batch_time}ms: #{ok_count} ok, #{fail_count} unsuccessful"
+      )
+
+      if action == "execute" and not is_nil(parent_message_id) and reply_index_enabled?() do
+        store_reply_index(parent_message_id, successes)
+      end
+
+      new_trace_headers = :otel_propagator_text_map.inject([]) |> Enum.into(%{})
+
+      payload_map = %{
+        batch_id: batch_id,
+        status: "success",
+        action: action,
+        # We map successes to message_ids list
+        message_ids: Enum.reverse(successes),
+        failures: Enum.reverse(failures),
+        trace_headers: new_trace_headers
+      }
+
+      payload_map =
+        if include_parent_message_id and parent_message_id do
+          Map.put(payload_map, :parent_message_id, parent_message_id)
+        else
+          payload_map
+        end
+
+      payload = Jason.encode!(payload_map)
+
+      callback_stream =
+        Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
+
+      idx = :erlang.phash2(System.unique_integer(), 5)
+
+      Redix.command(:"my_redix_#{idx}", [
+        "XADD",
+        callback_stream,
+        "MAXLEN",
+        "~",
+        "100000",
+        "*",
+        "payload",
+        payload
+      ])
+
+      Logger.debug("Published callback to #{callback_stream} for batch #{batch_id}#{parent_log}")
+
+      # Send a real-time event via :pg for the dashboard to render
+      event_data = %{
+        batch_id: batch_id,
+        action: action,
+        ok_count: ok_count,
+        fail_count: fail_count,
+        timestamp: :os.system_time(:millisecond)
+      }
+
+      event_data = Map.merge(event_data, payload_metadata || %{})
+
+      sse_enabled = Application.get_env(:prism, :redis_sse_enabled, false)
+
+      Logger.debug(
+        "SSE Evaluation -> enabled: #{sse_enabled}, action: #{action}, targets: #{length(targets)}, shard_index: #{shard_index}"
+      )
+
+      # Publish to Redis for web UI SSE streams if enabled
+      if sse_enabled and action == "execute" and length(targets) > 0 and shard_index == 0 do
+        first_target = hd(targets)
+
+        # Use root_hub_id if provided by the Python bot payload, else fallback to the target's hub_id
+        hub_id = root_hub_id || Map.get(first_target, "hub_id")
+
+        Logger.debug("SSE Extracted hub_id: #{inspect(hub_id)}")
+
+        if hub_id do
+          safe_metadata = payload_metadata || %{}
+
+          stream_payload =
+            %{
+              content: Map.get(discord_payload, "content", ""),
+              authorId: Map.get(safe_metadata, "author_id", ""),
+              guildId: Map.get(safe_metadata, "guild_id", ""),
+              authorName: Map.get(discord_payload, "username", "Unknown User"),
+              guildName: Map.get(safe_metadata, "guild_name", "Unknown Server"),
+              badges: Map.get(safe_metadata, "badges", []),
+              createdAt: DateTime.utc_now() |> DateTime.to_iso8601(),
+              id: parent_message_id || batch_id,
+              authorAvatarUrl: Map.get(discord_payload, "avatar_url", nil)
+            }
+            |> Jason.encode!()
+
+          sse_topic_prefix =
+            Application.get_env(:prism, :redis_sse_topic_prefix, "dashboard:stream:hub:")
+
+          idx = :erlang.phash2(System.unique_integer(), 5)
+
+          case Redix.command(:"my_redix_#{idx}", [
+                 "PUBLISH",
+                 "#{sse_topic_prefix}#{hub_id}",
+                 stream_payload
+               ]) do
+            {:ok, _} -> Logger.debug("SSE Publish Success to #{sse_topic_prefix}#{hub_id}")
+            {:error, reason} -> Logger.error("SSE Publish Failed: #{inspect(reason)}")
+          end
         end
       end
+
+      Enum.each(:pg.get_members(:prism_events), fn pid ->
+        send(pid, {:batch_processed, event_data})
+      end)
     end
   end
 

@@ -78,6 +78,7 @@ defmodule Prism.RateLimit.HeadersTest do
         {"x-ratelimit-remaining", "5"},
         {"x-ratelimit-reset-after", "1.5"}
       ]
+
       {limit, remaining, reset_at_ms} = Headers.parse_2xx(headers)
       assert limit == 10
       assert remaining == 5
@@ -109,6 +110,7 @@ defmodule Prism.RateLimit.HeadersTest do
         {"x-ratelimit-remaining", "0"},
         {"x-ratelimit-reset-after", "1.0"}
       ]
+
       {limit, remaining, _} = Headers.parse_2xx(headers)
       assert limit == 10
       assert remaining == 0
@@ -120,6 +122,7 @@ defmodule Prism.RateLimit.HeadersTest do
         {"x-ratelimit-remaining", "9"},
         {"x-ratelimit-reset-after", "2.0"}
       ]
+
       now = Headers.now_ms()
       {_limit, _remaining, reset_at_ms} = Headers.parse_2xx(headers)
       assert_in_delta reset_at_ms, now + 2000, 100
@@ -128,7 +131,9 @@ defmodule Prism.RateLimit.HeadersTest do
 
   describe "parse_429/2" do
     test "parses Discord 429 JSON with retry_after field" do
-      body = Jason.encode!(%{"retry_after" => 1.5, "global" => false, "message" => "rate limited"})
+      body =
+        Jason.encode!(%{"retry_after" => 1.5, "global" => false, "message" => "rate limited"})
+
       headers = [{"x-ratelimit-limit", "10"}]
       result = Headers.parse_429(headers, body)
       assert result.retry_after_ms == 1500
@@ -145,7 +150,12 @@ defmodule Prism.RateLimit.HeadersTest do
     end
 
     test "detects global rate limit from message text" do
-      body = Jason.encode!(%{"retry_after" => 1.0, "message" => "You are being rate limited due to global rate limits"})
+      body =
+        Jason.encode!(%{
+          "retry_after" => 1.0,
+          "message" => "You are being rate limited due to global rate limits"
+        })
+
       headers = [{"x-ratelimit-limit", "10"}]
       result = Headers.parse_429(headers, body)
       assert result.is_global == true
