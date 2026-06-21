@@ -21,13 +21,26 @@ defmodule Prism.RedisClient do
   def fetch(demand, last_id, config) do
     %{stream: stream, group: group, consumer_name: consumer_name, redix_pid: pid} = config
 
-    cmd =
-      ~w(XREADGROUP GROUP #{group} #{consumer_name} BLOCK 2000 COUNT #{demand} STREAMS #{stream} #{last_id})
+    if Prism.RateLimit.unhealthy?() do
+      backoff = Prism.RateLimit.backoff_ms()
 
-    case command(pid, cmd) do
-      {:ok, [[^stream, messages]]} -> {:ok, messages}
-      {:ok, nil} -> {:ok, []}
-      result -> result
+      sleep_ms =
+        cond do
+          backoff > 0 -> min(backoff, 30_000)
+          true -> 5_000
+        end
+
+      Process.sleep(sleep_ms)
+      {:ok, []}
+    else
+      cmd =
+        ~w(XREADGROUP GROUP #{group} #{consumer_name} BLOCK 2000 COUNT #{demand} STREAMS #{stream} #{last_id})
+
+      case command(pid, cmd) do
+        {:ok, [[^stream, messages]]} -> {:ok, messages}
+        {:ok, nil} -> {:ok, []}
+        result -> result
+      end
     end
   end
 
