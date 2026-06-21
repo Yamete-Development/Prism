@@ -94,7 +94,7 @@ defmodule Prism.RateLimit.Backpressure do
     now = System.monotonic_time(:millisecond)
     blocked_at = :persistent_term.get(@blocked_at_key, 0)
 
-    if blocked_at > 0 and (now - blocked_at) < @min_cooldown_ms do
+    if blocked_at > 0 and now - blocked_at < @min_cooldown_ms do
       Logger.debug(
         "[Backpressure] record_success ignored — within minimum cooldown window " <>
           "(#{now - blocked_at}ms elapsed of #{@min_cooldown_ms}ms)."

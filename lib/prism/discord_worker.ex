@@ -708,126 +708,129 @@ defmodule Prism.DiscordWorker do
     else
       case Finch.build(method, url, headers, body)
            |> Finch.request(DiscordFinch, receive_timeout: 30_000, pool_timeout: 10_000) do
-      {:ok, %{status: status, body: resp_body, headers: headers}} when status in 200..299 ->
-        Prism.RateLimit.handle_response(webhook_id, method_str, status, headers, resp_body)
+        {:ok, %{status: status, body: resp_body, headers: headers}} when status in 200..299 ->
+          Prism.RateLimit.handle_response(webhook_id, method_str, status, headers, resp_body)
 
-        if method == :post do
-          case Jason.decode(resp_body) do
-            {:ok, %{"id" => msg_id}} ->
-              Prism.RateLimit.record_success()
-              {:ok, msg_id}
+          if method == :post do
+            case Jason.decode(resp_body) do
+              {:ok, %{"id" => msg_id}} ->
+                Prism.RateLimit.record_success()
+                {:ok, msg_id}
 
-            {:ok, parsed} ->
-              Logger.warning(
-                "Webhook #{webhook_id} returned #{status} but no 'id' in body: #{inspect(parsed)}"
-              )
+              {:ok, parsed} ->
+                Logger.warning(
+                  "Webhook #{webhook_id} returned #{status} but no 'id' in body: #{inspect(parsed)}"
+                )
 
-              {:ok, nil}
+                {:ok, nil}
 
-            {:error, decode_err} ->
-              Logger.warning(
-                "Webhook #{webhook_id} returned #{status} but body is not valid JSON: #{inspect(decode_err)}"
-              )
+              {:error, decode_err} ->
+                Logger.warning(
+                  "Webhook #{webhook_id} returned #{status} but body is not valid JSON: #{inspect(decode_err)}"
+                )
 
-              {:ok, nil}
-          end
-        else
-          {:ok, nil}
-        end
-
-      {:ok, %{status: 429, body: resp_body, headers: headers}} ->
-        {:error, parsed} =
-          Prism.RateLimit.handle_response(webhook_id, method_str, 429, headers, resp_body)
-
-        if parsed.is_cloudflare do
-          Logger.error(
-            "Cloudflare IP-level block (429) on webhook_id=#{webhook_id}! " <>
-              "Delay: #{parsed.retry_after_ms}ms | Headers: #{inspect(headers)} | Body: #{resp_body}"
-          )
-        else
-          Logger.warning(
-            "Discord Rate Limited (429) on webhook_id=#{webhook_id}! " <>
-              "Method: #{method_str} | " <>
-              "Delay: #{parsed.retry_after_ms}ms | " <>
-              "Scope: #{parsed.scope || "unknown"} | Bucket: #{parsed.bucket || "unknown"} | " <>
-              "Global: #{parsed.is_global} | " <>
-              "Request Body: #{body} | " <>
-              "Response Body: #{resp_body} | " <>
-              "Response Headers: #{inspect(headers)}"
-          )
-        end
-
-        {:error, {:rate_limited, parsed.retry_after_ms}}
-
-      # ★ Permanent errors: 401, 403, 400
-      {:ok, %{status: status, body: resp_body, headers: headers}} when status in [401, 403] ->
-        is_cf = Prism.RateLimit.Headers.cloudflare_response?(headers, resp_body)
-
-        Logger.warning(
-          "Permanent error #{status} for webhook_id=#{webhook_id} – token invalid or missing permissions. " <>
-            "Cloudflare: #{is_cf} | Headers: #{inspect(headers)} | Body: #{resp_body}"
-        )
-
-        {:error, :permanent}
-
-      {:ok, %{status: 400, body: resp_body}} ->
-        Logger.error(
-          "Bad request webhook_id=#{webhook_id} body=#{resp_body} – dropping permanently."
-        )
-
-        {:error, :permanent}
-
-      {:ok, %{status: 404, body: resp_body}} ->
-        case Jason.decode(resp_body) do
-          {:ok, %{"code" => 10008}} ->
-            if method == :delete do
-              Logger.debug(
-                "Webhook_id=#{webhook_id} returned 10008 on delete. Message already deleted, treating as success."
-              )
-
-              if is_binary(message_id), do: cache_dead_message(webhook_id, message_id)
-              Prism.RateLimit.InvalidRequestTracker.record_invalid()
-              {:ok, nil}
-            else
-              Logger.info(
-                "Webhook_id=#{webhook_id} returned 10008 on #{method}. Target message not found (deleted)."
-              )
-
-              if is_binary(message_id), do: cache_dead_message(webhook_id, message_id)
-              Prism.RateLimit.InvalidRequestTracker.record_invalid()
-              {:error, :message_not_found}
+                {:ok, nil}
             end
+          else
+            {:ok, nil}
+          end
 
-          {:ok, %{"code" => code}} when code in [10003, 10015] ->
-            Logger.warning(
-              "Dropping webhook_id=#{webhook_id} status=404 body=#{resp_body} (invalid webhook)"
+        {:ok, %{status: 429, body: resp_body, headers: headers}} ->
+          {:error, parsed} =
+            Prism.RateLimit.handle_response(webhook_id, method_str, 429, headers, resp_body)
+
+          if parsed.is_cloudflare do
+            Logger.error(
+              "Cloudflare IP-level block (429) on webhook_id=#{webhook_id}! " <>
+                "Delay: #{parsed.retry_after_ms}ms | Headers: #{inspect(headers)} | Body: #{resp_body}"
             )
+          else
+            Logger.warning(
+              "Discord Rate Limited (429) on webhook_id=#{webhook_id}! " <>
+                "Method: #{method_str} | " <>
+                "Delay: #{parsed.retry_after_ms}ms | " <>
+                "Scope: #{parsed.scope || "unknown"} | Bucket: #{parsed.bucket || "unknown"} | " <>
+                "Global: #{parsed.is_global} | " <>
+                "Request Body: #{body} | " <>
+                "Response Body: #{resp_body} | " <>
+                "Response Headers: #{inspect(headers)}"
+            )
+          end
 
-            Prism.RateLimit.InvalidRequestTracker.record_invalid()
-            {:error, :invalid_webhook}
+          {:error, {:rate_limited, parsed.retry_after_ms}}
 
-          _ ->
-            Logger.warning("Treating 404 as transient webhook_id=#{webhook_id} body=#{resp_body}")
-            Prism.RateLimit.InvalidRequestTracker.record_invalid()
-            {:error, :network_error}
-        end
+        # ★ Permanent errors: 401, 403, 400
+        {:ok, %{status: status, body: resp_body, headers: headers}} when status in [401, 403] ->
+          is_cf = Prism.RateLimit.Headers.cloudflare_response?(headers, resp_body)
 
-      {:ok, %{status: status, body: resp_body}} when status in 500..599 ->
-        Logger.error("Server error #{status} for webhook_id=#{webhook_id}, body=#{resp_body}")
-        {:error, {:server_error, status}}
+          Logger.warning(
+            "Permanent error #{status} for webhook_id=#{webhook_id} – token invalid or missing permissions. " <>
+              "Cloudflare: #{is_cf} | Headers: #{inspect(headers)} | Body: #{resp_body}"
+          )
 
-      {:error, reason} ->
-        Logger.error("Network error for webhook_id=#{webhook_id}: #{inspect(reason)}")
-        {:error, :network_error}
+          {:error, :permanent}
 
-      {:ok, %{status: status, body: resp_body, headers: headers}} ->
-        Logger.warning(
-          "Unexpected status #{status} for webhook_id=#{webhook_id}. " <>
-            "Headers: #{inspect(headers)} | Body: #{resp_body}"
-        )
+        {:ok, %{status: 400, body: resp_body}} ->
+          Logger.error(
+            "Bad request webhook_id=#{webhook_id} body=#{resp_body} – dropping permanently."
+          )
 
-        {:ok, nil}
-    end
+          {:error, :permanent}
+
+        {:ok, %{status: 404, body: resp_body}} ->
+          case Jason.decode(resp_body) do
+            {:ok, %{"code" => 10008}} ->
+              if method == :delete do
+                Logger.debug(
+                  "Webhook_id=#{webhook_id} returned 10008 on delete. Message already deleted, treating as success."
+                )
+
+                if is_binary(message_id), do: cache_dead_message(webhook_id, message_id)
+                Prism.RateLimit.InvalidRequestTracker.record_invalid()
+                {:ok, nil}
+              else
+                Logger.info(
+                  "Webhook_id=#{webhook_id} returned 10008 on #{method}. Target message not found (deleted)."
+                )
+
+                if is_binary(message_id), do: cache_dead_message(webhook_id, message_id)
+                Prism.RateLimit.InvalidRequestTracker.record_invalid()
+                {:error, :message_not_found}
+              end
+
+            {:ok, %{"code" => code}} when code in [10003, 10015] ->
+              Logger.warning(
+                "Dropping webhook_id=#{webhook_id} status=404 body=#{resp_body} (invalid webhook)"
+              )
+
+              Prism.RateLimit.InvalidRequestTracker.record_invalid()
+              {:error, :invalid_webhook}
+
+            _ ->
+              Logger.warning(
+                "Treating 404 as transient webhook_id=#{webhook_id} body=#{resp_body}"
+              )
+
+              Prism.RateLimit.InvalidRequestTracker.record_invalid()
+              {:error, :network_error}
+          end
+
+        {:ok, %{status: status, body: resp_body}} when status in 500..599 ->
+          Logger.error("Server error #{status} for webhook_id=#{webhook_id}, body=#{resp_body}")
+          {:error, {:server_error, status}}
+
+        {:error, reason} ->
+          Logger.error("Network error for webhook_id=#{webhook_id}: #{inspect(reason)}")
+          {:error, :network_error}
+
+        {:ok, %{status: status, body: resp_body, headers: headers}} ->
+          Logger.warning(
+            "Unexpected status #{status} for webhook_id=#{webhook_id}. " <>
+              "Headers: #{inspect(headers)} | Body: #{resp_body}"
+          )
+
+          {:ok, nil}
+      end
     end
   end
 
@@ -842,7 +845,7 @@ defmodule Prism.DiscordWorker do
 
         (is_nil(content) or content == "") and
           is_nil_or_empty?(embeds) and
-            is_nil_or_empty?(components)
+          is_nil_or_empty?(components)
 
       _ ->
         false

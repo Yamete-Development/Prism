@@ -26,8 +26,10 @@ defmodule Prism.Application do
       end
     end
 
+    finch_pool_count = Application.get_env(:prism, :finch_pool_count, 50)
+
     Logger.info(
-      "[Prism] Starting up! Initializing Redix pool (5 conns) and Finch pool (250 conns)."
+      "[Prism] Starting up! Initializing Redix pool (5 conns) and Finch pool (#{finch_pool_count} conns)."
     )
 
     # Initialize atomic counter for Broadway batches
@@ -54,8 +56,6 @@ defmodule Prism.Application do
         strategy: Cluster.Strategy.LocalEpmd
       ]
     ]
-
-    finch_pool_count = Application.get_env(:prism, :finch_pool_count, 50)
 
     children =
       if Node.alive?() do

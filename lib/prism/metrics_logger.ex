@@ -27,9 +27,18 @@ defmodule Prism.MetricsLogger do
       end
 
     Logger.info(
-      "[Metrics] Active Broadway Batches: #{active_batches} | Active Retries (TaskSup): #{task_count} | Erlang Processes: #{process_count} | Run Queue: #{run_queue} | Open Ports/Sockets: #{port_count}"
+      "[Metrics] Active Broadway Batches: #{active_batches} | Active Retries (TaskSup): #{task_count} | Erlang Processes: #{process_count} | Run Queue: #{run_queue} | Open Ports/Sockets: #{port_count} | Fast Stream Len: #{stream_length(Application.get_env(:prism, :redis_stream_fast, "discord:fanout:stream:fast"))} | Slow Stream Len: #{stream_length(Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow"))}"
     )
 
     {:noreply, state}
+  end
+
+  defp stream_length(stream_key) do
+    idx = :erlang.phash2(System.unique_integer(), 5)
+
+    case Redix.command(:"my_redix_#{idx}", ["XLEN", stream_key]) do
+      {:ok, len} -> len
+      _ -> -1
+    end
   end
 end

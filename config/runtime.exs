@@ -41,7 +41,8 @@ config :prism,
   redis_sse_enabled: parse_bool.(System.get_env("PRISM_REDIS_SSE_ENABLED") || "false"),
   redis_sse_topic_prefix:
     System.get_env("PRISM_REDIS_SSE_TOPIC_PREFIX") || "dashboard:stream:hub:",
-  cancel_ttl: String.to_integer(System.get_env("PRISM_CANCEL_TTL", "300"))
+  cancel_ttl: String.to_integer(System.get_env("PRISM_CANCEL_TTL", "300")),
+  max_async_batches: String.to_integer(System.get_env("PRISM_MAX_ASYNC_BATCHES") || "300")
 
 config :opentelemetry,
   span_processor: :batch,
