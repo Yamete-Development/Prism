@@ -27,9 +27,11 @@ defmodule Prism.Application do
     end
 
     finch_pool_count = Application.get_env(:prism, :finch_pool_count, 50)
+    finch_protocols = Application.get_env(:prism, :finch_protocols, [:http2])
+    discord_base_url_val = discord_base_url()
 
     Logger.info(
-      "[Prism] Starting up! Initializing Redix pool (5 conns) and Finch pool (#{finch_pool_count} conns)."
+      "[Prism] Starting up! Initializing Redix pool (5 conns) and Finch pool (#{finch_pool_count} conns against #{discord_base_url_val})."
     )
 
     # Initialize worker ID at runtime to ensure unique Redis key scoping per host/IP
@@ -68,8 +70,8 @@ defmodule Prism.Application do
           {Finch,
            name: DiscordFinch,
            pools: %{
-             "https://discord.com" => [
-               protocols: [:http2],
+             discord_base_url_val => [
+               protocols: finch_protocols,
                count: finch_pool_count,
                conn_max_idle_time: 60_000,
                conn_opts: [
@@ -111,5 +113,9 @@ defmodule Prism.Application do
 
     Logger.info("[Prism] Application supervisor starting children...")
     Supervisor.start_link(children, opts)
+  end
+
+  defp discord_base_url do
+    Application.get_env(:prism, :discord_base_url, "https://discord.com")
   end
 end

@@ -7,6 +7,7 @@ defmodule Prism.MixProject do
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
+      elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps()
     ]
   end
@@ -30,7 +31,12 @@ defmodule Prism.MixProject do
       {:libcluster, "~> 3.4"},
       {:opentelemetry_api, "~> 1.3"},
       {:opentelemetry_exporter, "~> 1.6"},
-      {:opentelemetry, "~> 1.4"}
+      {:opentelemetry, "~> 1.4"},
+      {:bandit, "~> 1.5", only: :test},
+      {:plug, "~> 1.6", only: :test}
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 end

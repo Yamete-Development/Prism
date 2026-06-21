@@ -26,7 +26,7 @@ defmodule Prism.DiscordWorker do
         parent_message_id
       ) do
     if is_binary(webhook_id) and is_binary(webhook_token) do
-      base_url = "https://discord.com/api/webhooks/#{webhook_id}/#{webhook_token}"
+      base_url = "#{discord_base_url()}/api/webhooks/#{webhook_id}/#{webhook_token}"
       thread_id = Map.get(target, "thread_id")
       message_id = Map.get(target, "message_id")
 
@@ -584,6 +584,10 @@ defmodule Prism.DiscordWorker do
 
   defp backpressure_enabled? do
     Application.get_env(:prism, :backpressure_enabled, true)
+  end
+
+  defp discord_base_url do
+    Application.get_env(:prism, :discord_base_url, "https://discord.com")
   end
 
   defp publish_partial(action, target, batch_id, parent_msg_id, success_msg_id, error_reason) do
