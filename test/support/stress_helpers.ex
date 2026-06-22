@@ -50,7 +50,15 @@ defmodule Prism.StressHelpers do
     polled_at = Keyword.get(opts, :polled_at)
     enqueued_at = Keyword.get(opts, :enqueued_at)
 
-    Prism.DiscordWorker.process_target(action, target, content, batch_id, polled_at, enqueued_at, nil)
+    Prism.DiscordWorker.process_target(
+      action,
+      target,
+      content,
+      batch_id,
+      polled_at,
+      enqueued_at,
+      nil
+    )
   end
 
   @doc "Spawns a task under `Prism.TaskSup` that sleeps for `sleep_ms` then returns `:done`."

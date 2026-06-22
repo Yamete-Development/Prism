@@ -12,73 +12,119 @@ Prism is an OTP application built in Elixir that consumes payload batches from R
 Prism/
 ├── lib/
 │   ├── prism/
-│   │   ├── rate_limit/            # Local rate limit buckets & Cloudflare backpressure
-│   │   │   ├── backpressure.ex    # Tracks IP-level Cloudflare blocks
-│   │   │   ├── bucket.ex          # Local token bucket cache
-│   │   │   └── headers.ex         # Parses Discord/Cloudflare HTTP headers
-│   │   ├── application.ex         # Supervision tree configuration
-│   │   ├── delayed_queue.ex       # Atomic Redis ZSET enqueue/pop handlers
-│   │   ├── delayed_scheduler.ex   # Event-driven queue scheduler
-│   │   ├── discord_worker.ex      # Discord HTTP payload dispatcher
-│   │   ├── fanout_broadway.ex     # Fast/Slow stream consumers
-│   │   ├── redis_client.ex        # Redix command helpers
-│   │   └── retry_broadway.ex      # Retry stream consumer
+│   │   ├── discord_worker/           # Discord HTTP delivery (split into sub-modules)
+│   │   │   ├── callbacks.ex          # Partial callback publishing
+│   │   │   ├── dead_message.ex       # Dead message cache (prevents retrying deleted messages)
+│   │   │   ├── http.ex               # HTTP request building & execution
+│   │   │   └── retry.ex              # Retry spawning & delayed queue enqueue
+│   │   ├── fanout_broadway/          # Fanout pipeline (split into sub-modules)
+│   │   │   ├── batch.ex              # Batch fan-out, result aggregation, reply index
+│   │   │   ├── key_expansion.ex      # Short→long JSON key mapping
+│   │   │   └── sse.ex                # SSE/Dashboard PubSub publishing
+│   │   ├── rate_limit/               # Rate limit tracking & Cloudflare backpressure
+│   │   │   ├── backpressure.ex       # IP-level Cloudflare block tracking
+│   │   │   ├── bucket.ex             # Redis-backed token bucket
+│   │   │   ├── headers.ex            # Discord/Cloudflare HTTP header parsing
+│   │   │   └── invalid_request_tracker.ex  # ETS sliding-window invalid request counter
+│   │   ├── application.ex            # Supervision tree configuration
+│   │   ├── cancel_checker.ex         # Source message cancel detection (gated)
+│   │   ├── config.ex                 # Centralized configuration module
+│   │   ├── delayed_queue.ex          # Atomic Redis ZSET enqueue/pop handlers
+│   │   ├── delayed_scheduler.ex      # Event-driven queue scheduler
+│   │   ├── discord_worker.ex         # Core orchestration (process_target, process_retry)
+│   │   ├── fanout_broadway.ex        # Broadway pipeline (Fast/Slow lane consumers)
+│   │   ├── helpers.ex                # Shared utilities (redix_command, payload extraction, etc.)
+│   │   ├── metrics_api.ex            # Telemetry/metrics HTTP API
+│   │   ├── metrics_logger.ex         # Periodic server metrics logging
+│   │   ├── rate_limit.ex             # Public facade for all rate-limit operations
+│   │   ├── redis_client.ex           # OffBroadwayRedisStream client adapter
+│   │   ├── retry_broadway.ex         # Retry stream consumer
+│   │   └── stream_trimmer.ex         # Periodic stream XTRIM (gated)
 │   └── prism.ex
-├── config/                        # Elixir compile-time configurations
-├── mix.exs                        # Package manifest & deps (Broadway, Finch, Redix)
-└── CONTRACT.md                    # Data structures & serialization rules
+├── config/                           # Elixir compile-time configurations
+│   ├── runtime.exs                   # Runtime env var → config mapping
+│   └── test.exs                      # Test-specific config overrides
+├── mix.exs                           # Package manifest & deps
+├── .env.example                      # All environment variables with defaults
+└── CONTRACT.md                       # Data structures & serialization rules
 ```
 
 ---
 
-## Consumer Lanes (`FanoutBroadway`)
+## Configuration (`Prism.Config`)
 
-Prism runs Broadway pipelines to consume batches from Redis Streams concurrently:
+All runtime configuration is centralized in `lib/prism/config.ex`. Every configurable value has a getter function that reads from `Application.get_env/3` with sensible defaults. See `.env.example` for the full list of environment variables.
 
-1. **Fast Lane (`discord:fanout:stream:fast`):** Processed by workers configured for lower batches.
-2. **Slow Lane (`discord:fanout:stream:slow`):** Reserved for larger message fanouts (batches containing $> 80$ target channels).
-3. **Retry Lane (`discord:fanout:stream:retries`):** Dedicated stream fed by the delayed scheduler for failed webhooks.
+Key config categories:
+- **Redis / Streams**: pool size, stream keys, consumer group, delayed queue keys
+- **HTTP / Finch**: pool count, timeouts, keepalive
+- **Rate limiting**: backpressure thresholds, invalid request tracker windows, bucket TTLs
+- **Retry parameters**: base delays, max attempts per error type, checkpoints
+- **Feature gates**: dead message cache, key expansion, cancel checker, stream trimmer
+- **Broadway tuning**: concurrency, receive intervals, lane thresholds, task timeouts
+- **SSE / Dashboard**: PubSub topic prefix, enable/disable
+- **Cluster**: topology name
 
 ---
 
-## Key Expansion Function (`expand_keys/1`)
+## Consumer Lanes (`Prism.FanoutBroadway`)
 
-To optimize memory usage, the Python bot minifies JSON object keys before pushing batches to Redis. Prism automatically expands these keys to their full names using compile-time `@key_map` configurations:
+Prism runs Broadway pipelines to consume batches from Redis Streams concurrently:
+
+1. **Fast Lane (default `discord:fanout:stream:fast`):** Generally used for smaller batches.
+2. **Slow Lane (default `discord:fanout:stream:slow`):** Reserved for larger message fanouts (batches exceeding the `slow_lane_threshold`, default 80 targets).
+3. **Retry Lane (default `discord:fanout:stream:retries`):** Dedicated stream fed by the delayed scheduler for failed webhooks.
+
+All lane parameters (concurrency, receive intervals, thresholds) are configurable via `Prism.Config`.
+
+---
+
+## Key Expansion (`Prism.FanoutBroadway.KeyExpansion`)
+
+To optimize memory usage, publishers may minify JSON object keys before pushing batches to Redis. Prism automatically expands these keys to their full names using a compile-time `@key_map`.
 
 ```elixir
 # Detects format: if the first key is inside @key_map, recursively maps keys
 def expand_keys(map) when is_map(map) do ... end
 ```
-- **Backward Compatibility:** If the incoming payload is already in long-key format (e.g., the key `"action"` is present and not a known minified short key), it passes through unchanged without key modification.
+
+- **Backward Compatibility:** If the incoming payload is already in long-key format (e.g., the key `"action"` is present and not a known short key), it passes through unchanged.
+- **Disableable:** Set `PRISM_KEY_EXPANSION_ENABLED=false` to skip key expansion entirely. The key map is opinionated; users not using key minification should disable it.
 
 ---
 
 ## Atomic Delayed Queue System
 
-Failed webhook targets (rate-limited, server errors, network dropouts) are enqueued in Redis for delayed execution using a **ZSET** at key `discord:fanout:delayed`.
+Failed webhook targets (rate-limited, server errors, network dropouts) are enqueued in Redis for delayed execution using a **ZSET** (default key `discord:fanout:delayed`).
 
 ### Enqueueing (`Prism.DelayedQueue.enqueue/2`)
 - Adds a unique `retry_id` to the payload to prevent duplicates in the ZSET.
 - Scores the payload by epoch timestamp `execute_at_ms`.
-- Uses a Lua script to add the item. If the item has the *lowest score* (soonest tick), the script publishes a wakeup command to the Redis PubSub channel `"prism:wakeup"`.
+- Uses a Lua script to add the item. If the item has the *lowest score* (soonest tick), the script publishes a wakeup command to the Redis PubSub channel (default `prism:wakeup`).
 
 ### Event-Driven Scheduling (`Prism.DelayedScheduler`)
-- A zero-polling GenServer subscribes to `"prism:wakeup"`.
+- A zero-polling GenServer subscribes to the PubSub channel.
 - It executes `migrate_due_items/1` using an atomic Lua script:
-  1. Queries all items whose execution timestamp is $\le$ `now`.
-  2. Removes them from the ZSET and adds them to `discord:fanout:stream:retries`.
+  1. Queries all items whose execution timestamp is ≤ `now`.
+  2. Removes them from the ZSET and adds them to the retry stream.
   3. Returns the score of the *new* earliest item in the ZSET.
 - The scheduler calculates the delay to the next earliest item and registers a `Process.send_after/3` timer to sleep until that tick.
 - If a `"new_earliest"` PubSub wakeup event is received, the current timer is immediately cancelled, and the process ticks.
+- On Redis failure, the scheduler retries after a configurable delay (default 5s).
 
 ---
 
 ## Rate Limiting & Backpressure
 
+### Rate Limit Facade (`Prism.RateLimit`)
+- Public API that aggregates `Bucket`, `Backpressure`, `Headers`, and `InvalidRequestTracker`.
+- Callers import one module for `.check/2`, `.handle_response/5`, `.unhealthy?/0`, `.backoff_ms/0`, `.record_success/0`.
+
 ### Local Rate-Limit Buckets (`Prism.RateLimit.Bucket`)
-- Keeps local counters of remaining requests per webhook ID.
-- Pre-flight checks (`check/2`) block or defer executions *before* making network calls.
+- Keeps Redis-backed counters of remaining requests per webhook ID.
+- Pre-flight checks (`acquire/2`) atomically check-and-decrement *before* making network calls.
 - Updates bucket state on HTTP responses (2xx extracts `x-ratelimit-*` headers; 429 locks the bucket).
+- All thresholds and TTLs are configurable via `Prism.Config`.
 
 ### Cloudflare IP-Level Blocks (`Prism.RateLimit.Backpressure`)
 - If a 429 response is identified as coming from Cloudflare (IP-level blocking):
@@ -86,3 +132,63 @@ Failed webhook targets (rate-limited, server errors, network dropouts) are enque
   2. The backoff target is saved to `:persistent_term` to survive GenServer crashes.
   3. Outbound requests are blocked (`unhealthy?() == true`).
   4. Once a worker records a successful 2xx request, `record_success/0` clears the backpressure blocks.
+
+### Invalid Request Tracker (`Prism.RateLimit.InvalidRequestTracker`)
+- ETS-based sliding window counter for invalid HTTP responses (401, 403, non-shared 429).
+- When the count approaches Discord's Cloudflare ban threshold, outbound HTTP is paused.
+- All window sizes and thresholds are configurable via `Prism.Config`.
+
+---
+
+## Helpers (`Prism.Helpers`)
+
+Shared utilities consumed across the codebase:
+- `redix_command/1` — Redis command dispatch with pool-aware connection selection
+- `redix_pipeline/1` — Redis pipeline dispatch
+- `get_payload_from_redis_data/1` — Extracts the `payload` field from OffBroadwayRedisStream data
+- `empty_discord_payload?/1` — Checks whether a webhook payload has no content, embeds, or components
+- `action_to_method_string/1` — Converts Prism action names to HTTP method strings
+- `safe_method_atom/1` — Converts method strings to atoms with fallback
+
+---
+
+## Discord Worker Sub-Modules
+
+### `Prism.DiscordWorker` (core)
+- `process_target/7` — Main entry point for processing individual webhook targets
+- `process_retry/3` — Retry processing from the retry pipeline
+
+### `Prism.DiscordWorker.HTTP`
+- `build_request/4` — URL/method construction for execute/edit/delete
+- `do_http_request/7` — Finch HTTP call wrapper with OpenTelemetry tracing
+
+### `Prism.DiscordWorker.Retry`
+- `spawn_retry/13` — Encode retry payload and enqueue to `DelayedQueue`
+
+### `Prism.DiscordWorker.Callbacks`
+- `publish_partial/6` — Publish individual retry results to the callback stream
+
+### `Prism.DiscordWorker.DeadMessage`
+- `dead_message_cached?/2` — Check both scoped and unscoped dead message cache keys
+- `cache_dead_message/3` — Store dead message with configurable TTL (gated by `Prism.Config.dead_message_cache_enabled?/0`)
+
+---
+
+## Fanout Broadway Sub-Modules
+
+### `Prism.FanoutBroadway` (core)
+- `start_link/1` — Broadway initialization with configurable stream keys and receive intervals
+- `handle_message/3` — Parse JSON, expand keys, gate checks, spawn async batch
+
+### `Prism.FanoutBroadway.KeyExpansion`
+- `@key_map` — The 23-entry short→long key mapping (compile-time constant)
+- `expand_keys/1` — Recursive key expansion (gated by `Prism.Config.key_expansion_enabled?/0`)
+
+### `Prism.FanoutBroadway.Batch`
+- `process_batch/10` — `Task.async_stream` fan-out, success/failure aggregation
+- `spawn_async_batch/10` — `Task.Supervisor` async spawning with crash recovery
+- `store_reply_index/2` — Redis reply index storage
+
+### `Prism.FanoutBroadway.SSE`
+- `publish_sse_event/7` — Extract metadata, build SSE payload, publish to Redis PubSub
+- Gated by `Prism.Config.sse_enabled?/0`

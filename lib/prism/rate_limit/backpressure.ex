@@ -7,8 +7,6 @@ defmodule Prism.RateLimit.Backpressure do
   use GenServer
   require Logger
 
-  @max_backoff_ms 600_000
-  @min_cooldown_ms 60_000
   @term_key :prism_backoff_until
   @blocked_at_key :prism_blocked_at
 
@@ -21,8 +19,10 @@ defmodule Prism.RateLimit.Backpressure do
     now = System.monotonic_time(:millisecond)
     blocked_at = :persistent_term.get(@blocked_at_key, 0)
 
+    min_cooldown = Prism.Config.backpressure_min_cooldown_ms()
+
     cooldown_remaining =
-      if blocked_at > 0, do: max(0, @min_cooldown_ms - (now - blocked_at)), else: 0
+      if blocked_at > 0, do: max(0, min_cooldown - (now - blocked_at)), else: 0
 
     natural_remaining =
       case :persistent_term.get(@term_key, 0) do
@@ -66,7 +66,8 @@ defmodule Prism.RateLimit.Backpressure do
 
   @impl true
   def handle_cast({:block, retry_after_ms}, state) do
-    ms = min(retry_after_ms, @max_backoff_ms)
+    max_backoff = Prism.Config.backpressure_max_backoff_ms()
+    ms = min(retry_after_ms, max_backoff)
     now = System.monotonic_time(:millisecond)
     until = now + ms
 
@@ -93,11 +94,12 @@ defmodule Prism.RateLimit.Backpressure do
   def handle_cast(:success, state) do
     now = System.monotonic_time(:millisecond)
     blocked_at = :persistent_term.get(@blocked_at_key, 0)
+    min_cooldown = Prism.Config.backpressure_min_cooldown_ms()
 
-    if blocked_at > 0 and now - blocked_at < @min_cooldown_ms do
+    if blocked_at > 0 and now - blocked_at < min_cooldown do
       Logger.debug(
         "[Backpressure] record_success ignored — within minimum cooldown window " <>
-          "(#{now - blocked_at}ms elapsed of #{@min_cooldown_ms}ms)."
+          "(#{now - blocked_at}ms elapsed of #{min_cooldown}ms)."
       )
     else
       was_active = unhealthy?()

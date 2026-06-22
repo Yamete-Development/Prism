@@ -1,99 +1,128 @@
-# Prism - A High-Performance Discord Webhook Router
+# Prism — A High-Performance Discord Webhook Router
 
-Prism is a high-performance, asynchronous worker pool written in Elixir. It acts as a "dumb, fast pipe" for routing webhook requests to Discord at scale. 
+Prism is a high-performance, asynchronous worker pool written in Elixir. It acts as a fast pipe for routing webhook requests to Discord at scale.
 
-Instead of managing HTTP request loops, retries, and rate limits within your main application (like a Python bot), you enqueue standard JSON payloads to a Redis Stream. Prism pulls these batches, fans them out concurrently, handles all Discord HTTP `429 Too Many Requests` backpressure automatically, and publishes a summary callback via Redis when the batch is finished.
+Instead of managing HTTP request loops, retries, and rate limits within your main application, you enqueue standard JSON payloads to a Redis Stream. Prism pulls these batches, fans them out concurrently, handles all Discord HTTP `429 Too Many Requests` backpressure automatically, and publishes a summary callback via Redis when the batch is finished.
 
-For execute batches, Prism can also include the originating message ID in the callback and write a durable reply delivery index to Redis. That lets downstream consumers recover reply, edit, and delete state even if the database callback lags behind delivery.
-
-Prism is entirely payload-agnostic. It does not enforce any specific Discord formatting rules, making it a perfectly general-purpose tool for any Discord bot or application that needs to broadcast messages to hundreds or thousands of webhooks quickly.
+Prism is entirely payload-agnostic. It does not enforce any specific Discord formatting rules, making it a general-purpose tool for any Discord bot or application that needs to broadcast messages to hundreds or thousands of webhooks quickly.
 
 ## Architecture
 
 This worker uses **Broadway** to process Redis Stream messages concurrently, with **Finch** providing high-performance HTTP pooling.
 
 ### Key Features
-- **Unbounded Fan-out:** Group requests into batches; Prism concurrently dispatches up to 80 targets per batch.
-- **Smart Retries & Backpressure:** Automatically intercepts Discord's `429` rate limit responses, reads the `retry_after` header, and spawns background tasks to complete the request without blocking the main pipeline. 
-- **Target Overrides:** Efficiently send the exact same base payload to 99% of targets, while providing a target-specific `overrides` dictionary (e.g. for custom mentions) that Prism will merge on the fly.
+- **Unbounded Fan-out:** Group requests into batches; Prism concurrently dispatches up to 80 targets per batch (configurable).
+- **Smart Retries & Backpressure:** Automatically intercepts Discord's `429` rate limit responses, reads the `retry_after` header, and spawns background tasks to complete the request without blocking the main pipeline.
+- **Target Overrides:** Efficiently send the exact same base payload to most targets, while providing a target-specific `overrides` dictionary that Prism will merge on the fly.
 - **Callback System:** Emits real-time event summaries (successes vs. permanent/transient failures) back to a Redis Stream so your main application can delete dead webhooks from its database.
-- **Durable Reply Index:** Optionally publishes the root message ID alongside execute callbacks and stores a Redis reply map for downstream recovery.
+- **Configurable Everything:** All thresholds, delays, stream keys, pool sizes, and feature gates are configurable via environment variables. See `.env.example` for the full list.
+- **Feature Gates:** Dead message cache, key expansion, cancel checker, and stream trimmer can all be disabled independently.
 
 ## Integration Contract
 
-Prism communicates purely over Redis Streams using JSON payloads.
-For the complete schema detailing how to enqueue tasks and consume callbacks, see [CONTRACT.md](CONTRACT.md).
+Prism communicates purely over Redis Streams using JSON payloads. For the complete schema detailing how to enqueue tasks and consume callbacks, see [CONTRACT.md](CONTRACT.md).
 
-## Environment Variables
+## Configuration
 
-Configuration is handled dynamically via environment variables. See the provided `.env.example` file for defaults.
+All runtime configuration is done via environment variables with sensible defaults. Copy `.env.example` to `.env` and adjust as needed:
+
+```bash
+cp .env.example .env
+```
+
+### Essential Variables
 
 | Variable | Description | Default |
-| --- | --- | --- |
-| `REDIS_HOST` | The hostname of the Redis instance. | `localhost` |
-| `REDIS_PORT` | The port of the Redis instance. | `6379` |
-| `REDIS_PASSWORD` | The password for the Redis instance, if required. | _none_ |
-| `REDIS_STREAM_FAST` | The name of the fast lane Redis stream to consume from. | `discord:fanout:stream:fast` |
-| `REDIS_STREAM_SLOW` | The name of the slow lane Redis stream to consume from. | `discord:fanout:stream:slow` |
-| `REDIS_CALLBACK_STREAM` | The name of the Redis stream to publish callbacks to. | `discord:fanout:callbacks` |
-| `REDIS_GROUP` | The Redis stream consumer group name. | `elixir_fanout_pool` |
-| `MAX_BATCHES_PER_SEC` | Rate limit control. 1 batch = up to 80 targets. | `5` |
-| `PRISM_BROADWAY_CONCURRENCY` | Maximum number of batches processed concurrently per lane. | `50` |
-| `PRISM_BATCH_MAX_CONCURRENCY` | Maximum concurrent HTTP requests fired per batch. | `80` |
-| `PRISM_BACKPRESSURE_ENABLED` | Per-node Cloudflare IP-block cooldown. When a 429 is received, the worker sleeps between batches until the cooldown expires. Set to `false` to disable. | `true` |
-| `PRISM_RETRY_MAX_BATCHES_PER_SEC` | Rate limit (batches/sec) for the background retry pipeline. | `50` |
-| `PRISM_RETRY_BROADWAY_CONCURRENCY` | Max concurrent batches for the background retry pipeline. | `50` |
-| `PRISM_INCLUDE_PARENT_MESSAGE_ID` | Include the root message ID in execute callbacks. | `true` |
-| `PRISM_REPLY_INDEX_ENABLED` | Persist the durable Redis reply index for execute callbacks. | `true` |
-| `PRISM_REPLY_INDEX_PREFIX` | Redis key prefix used for reply delivery state. | `p:d` |
-| `PRISM_REPLY_INDEX_TTL_SECONDS` | TTL for reply delivery index keys. | `604800` |
-| `PRISM_REDIS_SSE_ENABLED` | Set to `true` to publish payload to Redis Pub/Sub for SSE streaming. | `false` |
-| `PRISM_REDIS_SSE_TOPIC_PREFIX` | Prefix for the Pub/Sub topic used by SSE events. | `dashboard:stream:hub:` |
+|---|---|---|
+| `REDIS_HOST` | Redis hostname | `localhost` |
+| `REDIS_PORT` | Redis port | `6379` |
+| `REDIS_STREAM_FAST` | Fast lane stream key | `discord:fanout:stream:fast` |
+| `REDIS_STREAM_SLOW` | Slow lane stream key | `discord:fanout:stream:slow` |
+| `REDIS_CALLBACK_STREAM` | Callback stream key | `discord:fanout:callbacks` |
+| `REDIS_GROUP` | Consumer group name | `elixir_fanout_pool` |
+
+### Performance Tuning
+
+| Variable | Description | Default |
+|---|---|---|
+| `PRISM_REDIX_POOL_SIZE` | Redix connection pool size | `5` |
+| `PRISM_FINCH_POOL_COUNT` | Finch HTTP connection pool size | `50` |
+| `PRISM_BROADWAY_CONCURRENCY` | Max concurrent batches per fanout lane | `50` |
+| `PRISM_BATCH_MAX_CONCURRENCY` | Max concurrent HTTP requests per batch | `80` |
+| `PRISM_RETRY_BROADWAY_CONCURRENCY` | Max concurrent batches for retry lane | `10` |
+| `PRISM_SLOW_LANE_THRESHOLD` | Route batches with > N targets to slow lane | `80` |
+| `PRISM_MAX_ASYNC_BATCHES` | Max in-flight async batches before re-enqueue | `300` |
+
+See `.env.example` for the complete list of all configurable variables including retry parameters, rate limit thresholds, feature gates, timeouts, and cluster settings.
 
 ## Getting Started
 
-1. Ensure you have [Elixir installed](https://elixir-lang.org/install.html). (This project recommends using `mise` or `asdf`).
+1. Ensure you have [Elixir installed](https://elixir-lang.org/install.html).
 2. Clone the repository.
 3. Install dependencies:
    ```bash
    mix deps.get
    ```
-4. Copy the `.env.example` file to set your own environment variables:
+4. Copy the `.env.example` file and set your environment variables:
    ```bash
    cp .env.example .env
    ```
-5. Source your environment variables (e.g. `source .env`) and start the application:
+5. Source your environment and start the application:
    ```bash
-   mix run --no-halt
+   source .env && mix run --no-halt
    ```
 
 ## Docker
 
 ```bash
 # Build
-docker build -t interchat-broadcast-worker .
+docker build -t prism .
 
 # Run
 docker run -d \
   -e REDIS_HOST=host.docker.internal \
   -e REDIS_PORT=6379 \
-  interchat-broadcast-worker
+  prism
 ```
 
 ## Project Structure
 
 ```
 lib/
-├── prism.ex                 # Application entrypoint
+├── prism.ex                                  # Application entrypoint
 ├── prism/
-│   ├── application.ex       # Supervision tree
-│   ├── discord_worker.ex    # Finch HTTP client implementation
-│   ├── fanout_broadway.ex   # Broadway topology for Redis Streams
-│   ├── metrics_api.ex       # API for exposing telemetry/metrics
-│   ├── metrics_logger.ex    # Logger for processing metrics
-│   └── redis_client.ex      # Redis connection management
-mix.exs                      # Project dependencies & configuration
-test/                        # Unit and integration tests
+│   ├── application.ex                        # Supervision tree
+│   ├── config.ex                             # Centralized configuration module
+│   ├── helpers.ex                            # Shared utility functions
+│   ├── discord_worker.ex                     # Core orchestration (process_target, process_retry)
+│   ├── discord_worker/
+│   │   ├── http.ex                           # HTTP request building & execution
+│   │   ├── retry.ex                          # Retry spawning & delayed queue enqueue
+│   │   ├── callbacks.ex                      # Partial callback publishing
+│   │   └── dead_message.ex                   # Dead message cache
+│   ├── fanout_broadway.ex                    # Broadway pipeline (Fast/Slow lanes)
+│   ├── fanout_broadway/
+│   │   ├── key_expansion.ex                  # Short→long JSON key mapping
+│   │   ├── batch.ex                          # Batch fan-out & result aggregation
+│   │   └── sse.ex                            # SSE/Dashboard PubSub publishing
+│   ├── rate_limit.ex                         # Public facade for rate-limit operations
+│   ├── rate_limit/
+│   │   ├── backpressure.ex                   # Cloudflare IP-level block tracking
+│   │   ├── bucket.ex                         # Redis-backed token bucket
+│   │   ├── headers.ex                        # HTTP header parsing
+│   │   └── invalid_request_tracker.ex        # Sliding-window invalid request counter
+│   ├── delayed_queue.ex                      # Atomic Redis ZSET enqueue/pop
+│   ├── delayed_scheduler.ex                  # Event-driven queue scheduler
+│   ├── retry_broadway.ex                     # Retry stream consumer
+│   ├── cancel_checker.ex                     # Source message cancel detection
+│   ├── stream_trimmer.ex                     # Periodic stream XTRIM
+│   ├── redis_client.ex                       # OffBroadwayRedisStream adapter
+│   ├── metrics_api.ex                        # Telemetry/metrics HTTP API
+│   └── metrics_logger.ex                     # Periodic server metrics logging
+config/
+├── runtime.exs                               # Env var → config mapping
+└── test.exs                                  # Test-specific config overrides
+test/                                         # Unit and integration tests
 ```
 
 ## License

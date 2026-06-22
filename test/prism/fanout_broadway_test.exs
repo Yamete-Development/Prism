@@ -1,6 +1,6 @@
 defmodule Prism.FanoutBroadwayTest do
   use ExUnit.Case, async: true
-  alias Prism.FanoutBroadway
+  alias Prism.FanoutBroadway.KeyExpansion
 
   describe "expand_keys/1" do
     test "recursively expands minified payloads including nested layouts and components" do
@@ -30,7 +30,7 @@ defmodule Prism.FanoutBroadwayTest do
         }
       }
 
-      assert FanoutBroadway.expand_keys(payload) == expected
+      assert KeyExpansion.expand_keys(payload) == expected
     end
 
     test "passes already-expanded payloads through unchanged" do
@@ -46,7 +46,7 @@ defmodule Prism.FanoutBroadwayTest do
         }
       }
 
-      assert FanoutBroadway.expand_keys(payload) == payload
+      assert KeyExpansion.expand_keys(payload) == payload
     end
 
     test "expands all top-level minified keys" do
@@ -60,7 +60,7 @@ defmodule Prism.FanoutBroadwayTest do
         "d" => %{"ai" => "author1", "gn" => "My Guild"}
       }
 
-      expanded = FanoutBroadway.expand_keys(payload)
+      expanded = KeyExpansion.expand_keys(payload)
       assert expanded["action"] == "execute"
       assert expanded["batch_id"] == "batch-123"
       assert expanded["message_id"] == "msg-456"
@@ -80,7 +80,7 @@ defmodule Prism.FanoutBroadwayTest do
         ]
       }
 
-      expanded = FanoutBroadway.expand_keys(payload)
+      expanded = KeyExpansion.expand_keys(payload)
       targets = expanded["targets"]
       assert length(targets) == 2
       assert Enum.at(targets, 0)["channel_id"] == "ch1"
@@ -99,21 +99,21 @@ defmodule Prism.FanoutBroadwayTest do
         "p" => %{"unknown_nested" => "stuff"}
       }
 
-      expanded = FanoutBroadway.expand_keys(payload)
+      expanded = KeyExpansion.expand_keys(payload)
       assert expanded["action"] == "execute"
       assert expanded["custom_field"] == "value"
       assert expanded["payload"]["unknown_nested"] == "stuff"
     end
 
     test "empty map returns empty map" do
-      assert FanoutBroadway.expand_keys(%{}) == %{}
+      assert KeyExpansion.expand_keys(%{}) == %{}
     end
 
     test "non-map values pass through unchanged" do
-      assert FanoutBroadway.expand_keys("string") == "string"
-      assert FanoutBroadway.expand_keys(42) == 42
-      assert FanoutBroadway.expand_keys(nil) == nil
-      assert FanoutBroadway.expand_keys([1, 2, 3]) == [1, 2, 3]
+      assert KeyExpansion.expand_keys("string") == "string"
+      assert KeyExpansion.expand_keys(42) == 42
+      assert KeyExpansion.expand_keys(nil) == nil
+      assert KeyExpansion.expand_keys([1, 2, 3]) == [1, 2, 3]
     end
 
     test "already-expanded keys are not re-expanded" do
@@ -123,7 +123,7 @@ defmodule Prism.FanoutBroadwayTest do
         "targets" => [%{"channel_id" => "ch1"}]
       }
 
-      assert FanoutBroadway.expand_keys(payload) == payload
+      assert KeyExpansion.expand_keys(payload) == payload
     end
 
     test "all short-key abbreviations are mapped correctly" do
@@ -158,7 +158,7 @@ defmodule Prism.FanoutBroadwayTest do
         "r" => %{}
       }
 
-      expanded = FanoutBroadway.expand_keys(payload)
+      expanded = KeyExpansion.expand_keys(payload)
       assert expanded["action"] == "execute"
       assert expanded["payload"]["username"] == "user1"
       assert expanded["payload"]["content"] == "hello world"

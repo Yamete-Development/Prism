@@ -1,10 +1,10 @@
 # Redis Stream Contract
 
-Prism acts as a consumer of Redis Streams to process webhook dispatch requests, and a producer of Redis Streams to emit callbacks once processing is complete (or partially fails).
+Prism acts as a consumer of Redis Streams to process webhook dispatch requests, and a producer of Redis Streams to emit callbacks once processing is complete (or fails). All stream keys are configurable via environment variables — see `.env.example` for the full list.
 
 ## Enqueueing Work (Input Stream)
 
-To dispatch messages, push JSON payloads to your configured Redis stream (e.g., `discord:fanout:stream:fast`). 
+To dispatch messages, push JSON payloads to your configured Redis stream (default: `discord:fanout:stream:fast`).
 
 ### Payload Schema
 
@@ -14,11 +14,9 @@ To dispatch messages, push JSON payloads to your configured Redis stream (e.g., 
   "action": "execute | edit | delete",
   "message_id": "string (optional, used as parent_message_id in callbacks for execute actions)",
   "metadata": {
-    "any_key": "any_value" 
+    "any_key": "any_value"
   },
   "payload": {
-    // The base Discord Webhook API payload. 
-    // This is passed directly to Discord.
     "content": "Hello World",
     "embeds": [],
     "components": [],
@@ -30,18 +28,10 @@ To dispatch messages, push JSON payloads to your configured Redis stream (e.g., 
       "webhook_token": "abc_xyz...",
       "thread_id": "string (optional)",
       "message_id": "string (required if action is edit/delete)",
-      
-      // Target-specific overrides (Optional)
-      // These will be deep merged into the base `payload` before sending.
-      // Use this to customize content per-webhook (e.g., injecting mentions)
       "overrides": {
         "content": "Hello <@123456>!",
         "allowed_mentions": { "users": ["123456"] }
       },
-      
-      // Passthrough fields (Optional)
-      // Prism ignores these fields, but they are returned in the callback.
-      // Useful for correlating results back to your database.
       "channel_id": "string",
       "guild_id": "string",
       "connection_id": "string",
@@ -57,11 +47,12 @@ To dispatch messages, push JSON payloads to your configured Redis stream (e.g., 
 - `delete`: Deletes an existing webhook message (DELETE). Requires `message_id` on each target.
 
 ### Overrides Mechanism
-Prism acts as a generic router. It takes the base `payload` and does a shallow merge with a target's `overrides` dictionary before executing the HTTP request. This allows you to efficiently send identical messages to 99% of targets while sending slight variations (e.g., custom pings or components) to specific targets within the same batch.
 
-### Wire Format (Minified)
+Prism takes the base `payload` and does a shallow merge with a target's `overrides` dictionary before executing the HTTP request. This allows you to efficiently send identical messages to most targets while sending slight variations (e.g., custom pings or components) to specific targets within the same batch.
 
-To reduce Redis stream memory usage, the Python publisher minifies all JSON keys to 1-2 character codes. The Elixir consumer automatically expands them back to full names before processing. Publishers and consumers can safely mix old (long key) and new (short key) formats during deployment.
+### Wire Format (Key Minification)
+
+To reduce Redis stream memory usage, publishers may minify JSON keys to 1–2 character codes. Prism automatically expands them back to full names before processing. The key mapping is controlled by the `@key_map` in `Prism.FanoutBroadway.KeyExpansion`. If you do not use key minification, set `PRISM_KEY_EXPANSION_ENABLED=false` to skip this step.
 
 | Long key | Short key | Level |
 |---|---|---|
@@ -95,15 +86,11 @@ To reduce Redis stream memory usage, the Python publisher minifies all JSON keys
 
 Short keys that appear at multiple nesting levels (e.g. `m` for `message_id` at root and target level) are safe because JSON keys are scoped to their parent object.
 
-The authoritative mapping lives in the source:
-- Python: `apps/bot/services/prism/client.py` → `KEY_MAP`
-- Elixir: `lib/prism/fanout_broadway.ex` → `@key_map`
-
 ---
 
 ## Callbacks (Output Stream)
 
-Once a batch is fully processed (or hits maximum retries), Prism writes a callback event to the configured callback stream (e.g., `discord:fanout:callbacks`).
+Once a batch is fully processed (or hits maximum retries), Prism writes a callback event to the configured callback stream (default: `discord:fanout:callbacks`).
 
 ### Callback Schema
 
@@ -116,9 +103,7 @@ Once a batch is fully processed (or hits maximum retries), Prism writes a callba
   "message_ids": [
     {
       "webhook_id": "1234567890",
-      "message_id": "9876543210 (The Discord message ID created/edited)",
-      
-      // Passthrough fields returned from the target
+      "message_id": "9876543210",
       "channel_id": "string",
       "guild_id": "string",
       "connection_id": "string",
@@ -128,10 +113,8 @@ Once a batch is fully processed (or hits maximum retries), Prism writes a callba
   "failures": [
     {
       "webhook_id": "1234567890",
-      "error": "rate_limited | invalid_webhook | message_not_found | bad_request | server_error | network_error",
+      "error": "rate_limited | invalid_webhook | message_not_found | bad_request | server_error | network_error | permanent_error",
       "error_type": "transient | permanent",
-      
-      // Passthrough fields returned from the target
       "channel_id": "string",
       "guild_id": "string"
     }
@@ -140,5 +123,29 @@ Once a batch is fully processed (or hits maximum retries), Prism writes a callba
 ```
 
 ### Error Types
-- **permanent**: The webhook is deleted, the channel doesn't exist, or the payload is invalid. You should disable or delete this webhook from your database.
-- **transient**: Network timeout, Discord API outage, etc. Prism automatically retries transient errors before finally emitting a failure callback.
+
+| Error | Type | Meaning |
+|---|---|---|
+| `rate_limited` | transient | Discord returned 429. Prism retries automatically after the `retry_after` delay. |
+| `server_error` | transient | Discord returned 5xx. Prism retries with exponential backoff up to the configured max attempts. |
+| `network_error` | transient | TCP connection failure, DNS error, or unrecognized 404. Prism retries. |
+| `message_not_found` | permanent | Discord returned 10008 (unknown message). The target message was deleted. |
+| `invalid_webhook` | permanent | Discord returned 10003 or 10015. The webhook URL is invalid or deleted. |
+| `permanent_error` | permanent | Discord returned 401 or 403. The token is invalid or missing permissions. |
+| `bad_request` | transient | Discord returned 400. Typically a malformed embed or payload; not retried by default. |
+
+---
+
+## Configurable Stream Keys
+
+All stream keys and Redis identifiers are configurable. See `.env.example` for the full list of environment variables and their defaults.
+
+| Config Key | Env Var | Default |
+|---|---|---|
+| Fast lane stream | `REDIS_STREAM_FAST` | `discord:fanout:stream:fast` |
+| Slow lane stream | `REDIS_STREAM_SLOW` | `discord:fanout:stream:slow` |
+| Retry stream | `REDIS_RETRY_STREAM` | `discord:fanout:stream:retries` |
+| Callback stream | `REDIS_CALLBACK_STREAM` | `discord:fanout:callbacks` |
+| Consumer group | `REDIS_GROUP` | `elixir_fanout_pool` |
+| Delayed queue ZSET | `PRISM_DELAYED_ZSET_KEY` | `discord:fanout:delayed` |
+| PubSub wakeup channel | `PRISM_PUBSUB_CHANNEL` | `prism:wakeup` |

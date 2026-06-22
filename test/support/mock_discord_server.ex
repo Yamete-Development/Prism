@@ -94,11 +94,12 @@ defmodule MockDiscordServer do
         {"x-ratelimit-reset-after", to_string(retry_after_sec)},
         {"x-ratelimit-global", "true"}
       ],
-      body: Jason.encode!(%{
-        retry_after: retry_after_sec,
-        global: true,
-        message: "You are being rate limited."
-      })
+      body:
+        Jason.encode!(%{
+          retry_after: retry_after_sec,
+          global: true,
+          message: "You are being rate limited."
+        })
     })
   end
 
@@ -118,11 +119,12 @@ defmodule MockDiscordServer do
         {"x-ratelimit-scope", scope},
         {"x-ratelimit-bucket", "abc123"}
       ],
-      body: Jason.encode!(%{
-        retry_after: retry_after_sec,
-        global: false,
-        message: "You are being rate limited."
-      })
+      body:
+        Jason.encode!(%{
+          retry_after: retry_after_sec,
+          global: false,
+          message: "You are being rate limited."
+        })
     })
   end
 
@@ -174,7 +176,10 @@ defmodule MockDiscordServer do
     ensure_tables()
 
     if :ets.lookup(@stubs_table, @default_key) == [] do
-      :ets.insert(@stubs_table, {@default_key, %{status: 200, headers: [], body: Jason.encode!(%{id: "fallback"})}})
+      :ets.insert(
+        @stubs_table,
+        {@default_key, %{status: 200, headers: [], body: Jason.encode!(%{id: "fallback"})}}
+      )
     end
 
     Bandit.start_link(scheme: :http, port: port, plug: MockDiscordServer.Router)

@@ -4,23 +4,21 @@ defmodule Prism.DelayedQueue do
   """
   require Logger
 
-  @zset_key "discord:fanout:delayed"
-  @stream_key "discord:fanout:stream:retries"
-  @pubsub_channel "prism:wakeup"
+  alias Prism.Helpers
 
   @doc """
   Enqueues a payload for delayed execution.
   `delay_ms` is the number of milliseconds to wait.
   """
   def enqueue(payload, delay_ms) when is_map(payload) and is_integer(delay_ms) do
-    # Add a unique retry_id so payloads don't overwrite each other in the ZSET
     retry_id = :crypto.strong_rand_bytes(16) |> Base.encode16()
     payload_with_id = Map.put_new(payload, "retry_id", retry_id)
     json_payload = Jason.encode!(payload_with_id)
     execute_at_ms = :os.system_time(:millisecond) + delay_ms
 
-    # Lua script: ZADD the item. If it is the ONLY item or it has the lowest score,
-    # publish a wakeup event so the scheduler knows there's a sooner item.
+    zset_key = Prism.Config.delayed_zset_key()
+    pubsub_channel = Prism.Config.pubsub_channel()
+
     script = """
     local zset_key = KEYS[1]
     local pubsub_channel = KEYS[2]
@@ -38,14 +36,12 @@ defmodule Prism.DelayedQueue do
     return 0
     """
 
-    idx = :erlang.phash2(System.unique_integer(), 5)
-
-    case Redix.command(:"my_redix_#{idx}", [
+    case Helpers.redix_command([
            "EVAL",
            script,
            "2",
-           @zset_key,
-           @pubsub_channel,
+           zset_key,
+           pubsub_channel,
            to_string(execute_at_ms),
            json_payload
          ]) do
@@ -66,8 +62,9 @@ defmodule Prism.DelayedQueue do
   Returns the timestamp of the NEXT earliest item, or nil if empty.
   """
   def migrate_due_items(now_ms) do
-    # Lua script: Get all items <= now_ms, ZREM them, and XADD them to the stream.
-    # Then return the score of the *new* earliest item in the ZSET.
+    zset_key = Prism.Config.delayed_zset_key()
+    stream_key = Prism.Config.stream_retries()
+
     script = """
     local zset_key = KEYS[1]
     local stream_key = KEYS[2]
@@ -77,9 +74,8 @@ defmodule Prism.DelayedQueue do
 
     if #due_items > 0 then
       redis.call("ZREM", zset_key, unpack(due_items))
-      
+
       for i, item in ipairs(due_items) do
-        -- We encode it into the field 'payload' just like the main Broadway producer expects
         redis.call("XADD", stream_key, "*", "payload", item)
       end
     end
@@ -92,14 +88,12 @@ defmodule Prism.DelayedQueue do
     end
     """
 
-    idx = :erlang.phash2(System.unique_integer(), 5)
-
-    case Redix.command(:"my_redix_#{idx}", [
+    case Helpers.redix_command([
            "EVAL",
            script,
            "2",
-           @zset_key,
-           @stream_key,
+           zset_key,
+           stream_key,
            to_string(now_ms)
          ]) do
       {:ok, nil} ->

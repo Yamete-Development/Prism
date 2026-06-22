@@ -1,6 +1,4 @@
 defmodule Prism.Application do
-  # See https://hexdocs.pm/elixir/Application.html
-  # for more information on OTP Applications
   @moduledoc false
 
   use Application
@@ -26,34 +24,34 @@ defmodule Prism.Application do
       end
     end
 
-    finch_pool_count = Application.get_env(:prism, :finch_pool_count, 50)
-    finch_protocols = Application.get_env(:prism, :finch_protocols, [:http2])
-    discord_base_url_val = discord_base_url()
+    finch_pool_count = Prism.Config.finch_pool_count()
+    finch_protocols = Prism.Config.finch_protocols()
+    discord_base_url_val = Prism.Config.discord_base_url()
+    pool_size = Prism.Config.redix_pool_size()
 
     Logger.info(
-      "[Prism] Starting up! Initializing Redix pool (5 conns) and Finch pool (#{finch_pool_count} conns against #{discord_base_url_val})."
+      "[Prism] Starting up! Initializing Redix pool (#{pool_size} conns) and Finch pool (#{finch_pool_count} conns against #{discord_base_url_val})."
     )
 
-    # Initialize worker ID at runtime to ensure unique Redis key scoping per host/IP
     worker_id =
       System.get_env("PRISM_WORKER_ID") ||
         :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
 
     :persistent_term.put(:prism_worker_id, worker_id)
 
-    redis_opts = Application.get_env(:prism, :redis_opts, host: "localhost", port: 6379)
+    redis_opts = Prism.Config.redis_opts()
 
     redix_children =
-      for i <- 0..4 do
+      for i <- 0..(pool_size - 1) do
         Supervisor.child_spec({Redix, Keyword.put(redis_opts, :name, :"my_redix_#{i}")},
           id: :"my_redix_#{i}"
         )
       end
 
+    cluster_name = Prism.Config.cluster_topology()
+
     topologies = [
-      interchat: [
-        strategy: Cluster.Strategy.LocalEpmd
-      ]
+      {cluster_name, [strategy: Cluster.Strategy.LocalEpmd]}
     ]
 
     children =
@@ -73,9 +71,9 @@ defmodule Prism.Application do
              discord_base_url_val => [
                protocols: finch_protocols,
                count: finch_pool_count,
-               conn_max_idle_time: 60_000,
+               conn_max_idle_time: Prism.Config.finch_idle_timeout_ms(),
                conn_opts: [
-                 transport_opts: [keepalive: 30_000]
+                 transport_opts: [keepalive: Prism.Config.finch_keepalive_ms()]
                ]
              ]
            }},
@@ -107,15 +105,9 @@ defmodule Prism.Application do
           {Prism.MetricsLogger, []}
         ]
 
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Prism.Supervisor]
 
     Logger.info("[Prism] Application supervisor starting children...")
     Supervisor.start_link(children, opts)
-  end
-
-  defp discord_base_url do
-    Application.get_env(:prism, :discord_base_url, "https://discord.com")
   end
 end

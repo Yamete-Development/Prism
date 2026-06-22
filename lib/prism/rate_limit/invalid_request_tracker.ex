@@ -7,18 +7,15 @@ defmodule Prism.RateLimit.InvalidRequestTracker do
   where `X-RateLimit-Scope` is not `"shared"`.
 
   This GenServer maintains a local `:ordered_set` ETS table with millisecond
-  timestamps as keys.  Entries older than 10 minutes are pruned every 30
-  seconds.  When the in-window count exceeds the backpressure threshold new
-  outbound HTTP is deferred to the retry queue.
+  timestamps as keys. Entries older than the window are pruned periodically.
+  When the in-window count exceeds the backpressure threshold new outbound
+  HTTP is deferred to the retry queue.
   """
   use GenServer
 
   require Logger
 
   @table_name :prism_invalid_tracker
-  @window_ms 600_000
-  @backpressure_threshold 9_500
-  @critical_threshold 10_000
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -36,7 +33,7 @@ defmodule Prism.RateLimit.InvalidRequestTracker do
   end
 
   @doc """
-  Returns the number of invalid responses recorded in the last 10 minutes.
+  Returns the number of invalid responses recorded in the configured window.
   """
   @spec count_in_window() :: non_neg_integer()
   def count_in_window do
@@ -78,12 +75,14 @@ defmodule Prism.RateLimit.InvalidRequestTracker do
 
   @impl true
   def handle_call(:approaching, _from, state) do
-    {:reply, count_local() >= @backpressure_threshold, state}
+    threshold = Prism.Config.invalid_request_backpressure_threshold()
+    {:reply, count_local() >= threshold, state}
   end
 
   @impl true
   def handle_info(:prune, state) do
-    cutoff = System.monotonic_time(:millisecond) - @window_ms
+    window_ms = Prism.Config.invalid_request_window_ms()
+    cutoff = System.monotonic_time(:millisecond) - window_ms
     :ets.select_delete(@table_name, [{{:"$1"}, [{:<, :"$1", cutoff}], [true]}])
     {:noreply, state}
   end
@@ -91,19 +90,21 @@ defmodule Prism.RateLimit.InvalidRequestTracker do
   @impl true
   def handle_info(:report, state) do
     count = count_local()
+    backpressure_threshold = Prism.Config.invalid_request_backpressure_threshold()
+    critical_threshold = Prism.Config.invalid_request_critical_threshold()
 
     cond do
-      count >= @critical_threshold ->
+      count >= critical_threshold ->
         Logger.error(
           "[InvalidRequestTracker] CRITICAL: #{count} invalid requests in the " <>
-            "last 10 minutes. Cloudflare ban may be imminent."
+            "last window. Cloudflare ban may be imminent."
         )
 
-      count >= @backpressure_threshold ->
+      count >= backpressure_threshold ->
         Logger.warning(
-          "[InvalidRequestTracker] #{count} invalid requests in the last 10 " <>
-            "minutes. Approaching Cloudflare ban threshold " <>
-            "(#{@critical_threshold}). Backpressure active."
+          "[InvalidRequestTracker] #{count} invalid requests in the last " <>
+            "window. Approaching Cloudflare ban threshold " <>
+            "(#{critical_threshold}). Backpressure active."
         )
 
       true ->
@@ -119,7 +120,8 @@ defmodule Prism.RateLimit.InvalidRequestTracker do
 
   defp count_local do
     now = System.monotonic_time(:millisecond)
-    cutoff = now - @window_ms
+    window_ms = Prism.Config.invalid_request_window_ms()
+    cutoff = now - window_ms
     :ets.select_count(@table_name, [{{:"$1"}, [{:>=, :"$1", cutoff}], [true]}])
   end
 end

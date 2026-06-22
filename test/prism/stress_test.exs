@@ -31,7 +31,13 @@ defmodule Prism.StressTest do
 
   setup do
     MockDiscordServer.reset()
-    MockDiscordServer.stub_default(%{status: 200, headers: [], body: Jason.encode!(%{id: "fallback"})})
+
+    MockDiscordServer.stub_default(%{
+      status: 200,
+      headers: [],
+      body: Jason.encode!(%{id: "fallback"})
+    })
+
     reset_rate_limit_state()
     :ok
   end
@@ -117,7 +123,9 @@ defmodule Prism.StressTest do
       call_process_target(webhook)
       Process.sleep(80)
 
-      {:blocked, ttl} = Bucket.acquire("any_webhook_#{System.unique_integer([:positive])}", "post")
+      {:blocked, ttl} =
+        Bucket.acquire("any_webhook_#{System.unique_integer([:positive])}", "post")
+
       assert ttl > 0
       assert ttl <= 3500
     end

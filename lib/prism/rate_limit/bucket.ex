@@ -16,7 +16,7 @@ defmodule Prism.RateLimit.Bucket do
 
   require Logger
 
-  # Scoping key prefixes at runtime rather than compile-time to prevent key conflicts across different nodes and container restarts.
+  alias Prism.Helpers
 
   @acquire_script """
   local now = tonumber(ARGV[1])
@@ -72,8 +72,6 @@ defmodule Prism.RateLimit.Bucket do
   return "OK"
   """
 
-  @hash_ttl_seconds 3600
-
   @doc """
   Atomically check and decrement the rate-limit bucket for a webhook+method.
 
@@ -89,7 +87,7 @@ defmodule Prism.RateLimit.Bucket do
     g_key = global_key()
     now_ms = System.monotonic_time(:millisecond)
 
-    case redis_command(["EVAL", @acquire_script, "2", key, g_key, to_string(now_ms)]) do
+    case Helpers.redix_command(["EVAL", @acquire_script, "2", key, g_key, to_string(now_ms)]) do
       {:ok, [1, remaining, _]} ->
         {:ok, remaining}
 
@@ -120,8 +118,9 @@ defmodule Prism.RateLimit.Bucket do
       when is_integer(limit) and is_integer(remaining) and is_integer(reset_at_ms) do
     key = bucket_key(webhook_id, method)
     bucket = ""
+    ttl = Prism.Config.bucket_hash_ttl_seconds()
 
-    redis_command([
+    Helpers.redix_command([
       "EVAL",
       @update_script,
       "1",
@@ -130,7 +129,7 @@ defmodule Prism.RateLimit.Bucket do
       to_string(remaining),
       to_string(reset_at_ms),
       bucket,
-      to_string(@hash_ttl_seconds)
+      to_string(ttl)
     ])
     |> case do
       {:ok, _} ->
@@ -150,8 +149,9 @@ defmodule Prism.RateLimit.Bucket do
       when is_integer(limit) and is_integer(remaining) and is_integer(reset_at_ms) do
     key = global_key()
     bucket = ""
+    ttl = Prism.Config.bucket_hash_ttl_seconds()
 
-    redis_command([
+    Helpers.redix_command([
       "EVAL",
       @update_script,
       "1",
@@ -160,7 +160,7 @@ defmodule Prism.RateLimit.Bucket do
       to_string(remaining),
       to_string(reset_at_ms),
       bucket,
-      to_string(@hash_ttl_seconds)
+      to_string(ttl)
     ])
     |> case do
       {:ok, _} ->
@@ -181,10 +181,5 @@ defmodule Prism.RateLimit.Bucket do
   defp key_prefix do
     worker_id = :persistent_term.get(:prism_worker_id, "default")
     "rl:b:#{worker_id}"
-  end
-
-  defp redis_command(command) do
-    idx = :erlang.phash2(System.unique_integer(), 5)
-    Redix.command(:"my_redix_#{idx}", command)
   end
 end

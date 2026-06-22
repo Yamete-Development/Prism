@@ -4,66 +4,65 @@ defmodule Prism.StreamTrimmer do
   oldest pending message. This ensures we never trim messages that haven't been
   processed yet, while keeping streams compact during normal operation.
 
-  Runs every 30 seconds for each registered stream. During normal operation
-  streams stay near-empty because processed messages are trimmed immediately.
-  During an outage streams grow to hold the full backlog and shrink back down
-  once the consumer catches up.
+  Runs at a configurable interval for each registered stream. During normal
+  operation streams stay near-empty because processed messages are trimmed
+  immediately. During an outage streams grow to hold the full backlog and
+  shrink back down once the consumer catches up.
   """
   use GenServer
   require Logger
-
-  @trim_interval_ms 30_000
-
-  # --- Public API ---
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  # --- GenServer Callbacks ---
-
   @impl true
   def init(_opts) do
-    fanout_group = Application.get_env(:prism, :redis_group, "elixir_fanout_pool")
-    callback_group = "bot_team"
+    if Prism.Config.stream_trimmer_enabled?() do
+      fanout_group = Prism.Config.redis_group()
+      callback_group = Prism.Config.callback_consumer_group()
 
-    stream_fast = Application.get_env(:prism, :redis_stream_fast, "discord:fanout:stream:fast")
-    stream_slow = Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow")
+      stream_fast = Prism.Config.stream_fast()
+      stream_slow = Prism.Config.stream_slow()
+      callback_stream = Prism.Config.stream_callbacks()
+      trim_interval = Prism.Config.stream_trim_interval_ms()
 
-    callback_stream =
-      Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
+      streams = [
+        {stream_fast, fanout_group, "fast"},
+        {stream_slow, fanout_group, "slow"},
+        {callback_stream, callback_group, "callbacks"}
+      ]
 
-    # Each entry is {stream_key, consumer_group, label}
-    streams = [
-      {stream_fast, fanout_group, "fast"},
-      {stream_slow, fanout_group, "slow"},
-      {callback_stream, callback_group, "callbacks"}
-    ]
+      Logger.info(
+        "[StreamTrimmer] Starting periodic trim every #{div(trim_interval, 1000)}s for #{length(streams)} streams"
+      )
 
-    Logger.info(
-      "[StreamTrimmer] Starting periodic trim every #{div(@trim_interval_ms, 1000)}s for #{length(streams)} streams"
-    )
+      state = %{streams: streams, trim_interval: trim_interval, enabled: true}
 
-    state = %{streams: streams}
-
-    Process.send_after(self(), :trim, 5_000)
-    {:ok, state}
+      Process.send_after(self(), :trim, 5_000)
+      {:ok, state}
+    else
+      Logger.info("[StreamTrimmer] Disabled via config — not starting.")
+      {:ok, %{enabled: false}}
+    end
   end
 
   @impl true
+  def handle_info(:trim, %{enabled: false} = state) do
+    {:noreply, state}
+  end
+
   def handle_info(:trim, state) do
     Enum.each(state.streams, fn {stream, group, label} ->
       trim_stream(stream, group, label)
     end)
 
-    Process.send_after(self(), :trim, @trim_interval_ms)
+    Process.send_after(self(), :trim, state.trim_interval)
     {:noreply, state}
   end
 
-  # --- Private ---
-
   defp trim_stream(stream, group, label) do
-    idx = :erlang.phash2(System.unique_integer(), 5)
+    idx = :erlang.phash2(System.unique_integer(), Prism.Config.redix_pool_size())
     redix = :"my_redix_#{idx}"
 
     case get_safe_trim_id(redix, stream, group) do

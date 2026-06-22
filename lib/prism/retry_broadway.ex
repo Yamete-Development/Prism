@@ -4,15 +4,17 @@ defmodule Prism.RetryBroadway do
   require Logger
 
   alias Broadway.Message
+  alias Prism.Helpers
 
   def start_link(opts) do
     name = Keyword.get(opts, :name, __MODULE__)
 
-    redis_opts = Application.get_env(:prism, :redis_opts, host: "localhost", port: 6379)
-    stream_key = "discord:fanout:stream:retries"
-    redis_group = Application.get_env(:prism, :redis_group, "elixir_fanout_pool") <> "_retries"
+    redis_opts = Prism.Config.redis_opts()
+    stream_key = Prism.Config.stream_retries()
+    redis_group = Prism.Config.redis_group() <> "_retries"
 
-    broadway_concurrency = Application.get_env(:prism, :retry_broadway_concurrency, 10)
+    broadway_concurrency = Prism.Config.retry_broadway_concurrency()
+    receive_interval = Prism.Config.retry_receive_interval()
 
     Broadway.start_link(__MODULE__,
       name: name,
@@ -27,7 +29,7 @@ defmodule Prism.RetryBroadway do
             consumer_name:
               "broadcast_worker_retry_" <> Integer.to_string(:os.system_time(:microsecond)),
             make_stream: true,
-            receive_interval: 100
+            receive_interval: receive_interval
           ]
         }
       ],
@@ -43,10 +45,10 @@ defmodule Prism.RetryBroadway do
 
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
-    if backpressure_enabled?() and Prism.RateLimit.unhealthy?() do
+    if Prism.Config.backpressure_enabled?() and Prism.RateLimit.unhealthy?() do
       delay_ms = Prism.RateLimit.backoff_ms()
       [_id, fields] = data
-      payload_json = get_payload_from_redis_data(fields)
+      payload_json = Helpers.get_payload_from_redis_data(fields)
 
       with {:ok, raw} <- Jason.decode(payload_json) do
         batch_id = Map.get(raw, "batch_id", "unknown")
@@ -70,7 +72,6 @@ defmodule Prism.RetryBroadway do
       message
     else
       polled_at = :os.system_time(:millisecond)
-      # OffBroadwayRedisStream returns data as [entry_id, [field1, value1, ...]]
       [id, fields] = data
 
       enqueued_at =
@@ -85,13 +86,11 @@ defmodule Prism.RetryBroadway do
             :os.system_time(:millisecond)
         end
 
-      payload_json = get_payload_from_redis_data(fields)
+      payload_json = Helpers.get_payload_from_redis_data(fields)
 
       case Jason.decode(payload_json) do
         {:ok, payload} ->
           if Map.has_key?(payload, "targets") do
-            # Batch payload from FanoutBroadway backpressure — route back to the
-            # appropriate fanout stream so it can be fanned out to individual targets.
             route_batch_to_fanout(payload, payload_json)
           else
             Prism.DiscordWorker.process_retry(payload, polled_at, enqueued_at)
@@ -106,42 +105,31 @@ defmodule Prism.RetryBroadway do
     end
   end
 
-  defp get_payload_from_redis_data(data) when is_list(data) do
-    Enum.chunk_every(data, 2)
-    |> Enum.find_value(fn
-      ["payload", value] -> value
-      _ -> nil
-    end) || ""
-  end
-
-  defp get_payload_from_redis_data(%{"payload" => payload}), do: payload
-  defp get_payload_from_redis_data(_), do: ""
-
-  # Routes a batch-level payload (containing "targets") back to the appropriate
-  # fanout stream so it can be fanned out to individual webhook targets.
-  #
-  # The batch payload arrives here when FanoutBroadway enqueues it to the delayed
-  # queue during Cloudflare backpressure. Once the delay expires and backpressure
-  # is cleared, we re-publish it to the fanout stream for normal processing.
   defp route_batch_to_fanout(payload, payload_json) do
     targets = Map.get(payload, "targets", [])
     target_count = length(targets)
     batch_id = Map.get(payload, "batch_id", "unknown")
 
+    threshold = Prism.Config.slow_lane_threshold()
+
     stream_key =
-      if target_count > 80 do
-        Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow")
+      if target_count > threshold do
+        Prism.Config.stream_slow()
       else
-        Application.get_env(:prism, :redis_stream_fast, "discord:fanout:stream:fast")
+        Prism.Config.stream_fast()
       end
 
     Logger.info(
       "[RetryBroadway] Routing batch #{batch_id} (#{target_count} targets) back to fanout stream #{stream_key}"
     )
 
-    idx = :erlang.phash2(System.unique_integer(), 5)
-
-    case Redix.command(:"my_redix_#{idx}", ["XADD", stream_key, "*", "payload", payload_json]) do
+    case Helpers.redix_command([
+           "XADD",
+           stream_key,
+           "*",
+           "payload",
+           payload_json
+         ]) do
       {:ok, _entry_id} ->
         :ok
 
@@ -150,9 +138,5 @@ defmodule Prism.RetryBroadway do
           "[RetryBroadway] Failed to XADD batch #{batch_id} to #{stream_key}: #{inspect(reason)}"
         )
     end
-  end
-
-  defp backpressure_enabled? do
-    Application.get_env(:prism, :backpressure_enabled, true)
   end
 end
