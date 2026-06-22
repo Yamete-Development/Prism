@@ -16,7 +16,8 @@ defmodule Prism.DiscordWorker do
         batch_id \\ nil,
         polled_at \\ nil,
         enqueued_at \\ nil,
-        parent_message_id \\ nil
+        parent_message_id \\ nil,
+        opts \\ []
       )
 
   def process_target(
@@ -26,18 +27,19 @@ defmodule Prism.DiscordWorker do
         batch_id,
         polled_at,
         enqueued_at,
-        parent_message_id
+        parent_message_id,
+        opts
       ) do
+    preflight = Keyword.get(opts, :preflight)
+    skip_checkpoint_write = Keyword.get(opts, :skip_checkpoint_write, false)
+    parent_msg_id = if action == "execute", do: parent_message_id, else: nil
+
     if is_binary(webhook_id) and is_binary(webhook_token) do
       base_url = "#{Prism.Config.discord_base_url()}/api/webhooks/#{webhook_id}/#{webhook_token}"
       thread_id = Map.get(target, "thread_id")
       message_id = Map.get(target, "message_id")
 
-      dead_cache_hit =
-        action in ["edit", "delete"] and is_binary(message_id) and
-          DeadMessage.dead_message_cached?(webhook_id, message_id)
-
-      if dead_cache_hit do
+      if dead_cache_hit?(action, webhook_id, message_id) do
         Logger.debug(
           "Skipping #{action} for webhook_id=#{webhook_id} message_id=#{message_id} — known dead in cache"
         )
@@ -46,8 +48,7 @@ defmodule Prism.DiscordWorker do
       else
         content =
           if is_map(content) and action in ["execute", "edit"] do
-            overrides = Map.get(target, "overrides") || %{}
-            Map.merge(content, overrides)
+            Helpers.merge_overrides(content, target, action)
           else
             content
           end
@@ -55,16 +56,29 @@ defmodule Prism.DiscordWorker do
         headers = [{"Content-Type", "application/json"}]
         body = if action == "delete", do: nil, else: Jason.encode_to_iodata!(content)
 
-        checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
+        checkpoint_key = Helpers.checkpoint_key(action, batch_id, webhook_id)
         method_str = Helpers.action_to_method_string(action)
 
         cached_result =
-          if batch_id do
-            case Helpers.redix_command(["GET", checkpoint_key]) do
-              {:ok, "done"} -> {:ok, nil}
-              {:ok, msg_id} when is_binary(msg_id) -> {:ok, msg_id}
-              _ -> nil
-            end
+          cond do
+            preflight && preflight.checkpoint == :not_found ->
+              nil
+
+            preflight && preflight.checkpoint == {:done} ->
+              {:ok, nil}
+
+            preflight && match?({:ok, _}, preflight.checkpoint) ->
+              {:ok, elem(preflight.checkpoint, 1)}
+
+            batch_id ->
+              case Helpers.redix_command(["GET", checkpoint_key]) do
+                {:ok, "done"} -> {:ok, nil}
+                {:ok, msg_id} when is_binary(msg_id) -> {:ok, msg_id}
+                _ -> nil
+              end
+
+            true ->
+              nil
           end
 
         OpenTelemetry.Tracer.with_span "prism.worker.process_target" do
@@ -79,8 +93,6 @@ defmodule Prism.DiscordWorker do
           else
             if Prism.Config.backpressure_enabled?() and Prism.RateLimit.unhealthy?() do
               delay_ms = Prism.RateLimit.backoff_ms()
-
-              parent_msg_id = if action == "execute", do: parent_message_id, else: nil
 
               case HTTP.build_request(action, base_url, message_id, thread_id) do
                 {:ok, method, url} ->
@@ -109,22 +121,16 @@ defmodule Prism.DiscordWorker do
               defer_threshold = Prism.Config.rate_limit_defer_threshold_ms()
 
               {should_defer, should_sleep, rate_limit_delay_ms} =
-                case Prism.RateLimit.check(webhook_id, method_str) do
-                  {:ok, _remaining} ->
-                    {false, false, 0}
-
-                  {:blocked, ttl_ms} ->
-                    if ttl_ms > defer_threshold,
-                      do: {true, false, ttl_ms},
-                      else: {false, true, ttl_ms}
+                if preflight do
+                  defer_or_sleep(preflight.rate_limit, defer_threshold)
+                else
+                  defer_or_sleep(Prism.RateLimit.check(webhook_id, method_str), defer_threshold)
                 end
 
               if should_defer do
                 Logger.debug(
                   "Pre-flight rate limit check triggered for webhook_id=#{webhook_id} with long TTL=#{rate_limit_delay_ms}ms. Rescheduling immediately."
                 )
-
-                parent_msg_id = if action == "execute", do: parent_message_id, else: nil
 
                 case HTTP.build_request(action, base_url, message_id, thread_id) do
                   {:ok, method, url} ->
@@ -188,32 +194,7 @@ defmodule Prism.DiscordWorker do
                       )
                     end
 
-                    if batch_id do
-                      checkpoint_ttl = to_string(Prism.Config.checkpoint_ttl_seconds())
-
-                      case result do
-                        {:ok, msg_id} when is_binary(msg_id) ->
-                          Helpers.redix_command([
-                            "SETEX",
-                            checkpoint_key,
-                            checkpoint_ttl,
-                            msg_id
-                          ])
-
-                        {:ok, nil} ->
-                          Helpers.redix_command([
-                            "SETEX",
-                            checkpoint_key,
-                            checkpoint_ttl,
-                            "done"
-                          ])
-
-                        _ ->
-                          :ok
-                      end
-                    end
-
-                    parent_msg_id = if action == "execute", do: parent_message_id, else: nil
+                    write_checkpoint(skip_checkpoint_write, batch_id, action, webhook_id, result)
 
                     case result do
                       {:error, {:rate_limited, delay_ms}} ->
@@ -333,13 +314,16 @@ defmodule Prism.DiscordWorker do
         _batch_id,
         _polled_at,
         _enqueued_at,
-        _parent_message_id
+        _parent_message_id,
+        _opts
       ) do
     Logger.warning("Missing webhook data in target: #{inspect(target)}. Skipping.")
     {:error, :missing_webhook}
   end
 
-  def process_retry(payload, _polled_at, _enqueued_at) do
+  def process_retry(payload, _polled_at, _enqueued_at, opts \\ []) do
+    skip_checkpoint_write = Keyword.get(opts, :skip_checkpoint_write, false)
+
     source_message_id =
       payload["source_message_id"] || payload["parent_msg_id"] || payload["batch_id"]
 
@@ -392,11 +376,7 @@ defmodule Prism.DiscordWorker do
           :rate_limited
         )
       else
-        dead_cache_hit =
-          action in ["edit", "delete"] and is_binary(message_id) and
-            DeadMessage.dead_message_cached?(webhook_id, message_id)
-
-        if dead_cache_hit do
+        if dead_cache_hit?(action, webhook_id, message_id) do
           Logger.debug(
             "Retry skipping #{action} for webhook_id=#{webhook_id} message_id=#{message_id} — known dead in cache"
           )
@@ -417,15 +397,7 @@ defmodule Prism.DiscordWorker do
           defer_threshold = Prism.Config.rate_limit_defer_threshold_ms()
 
           {should_defer, should_sleep, rate_limit_delay_ms} =
-            case Prism.RateLimit.check(webhook_id, method_str) do
-              {:ok, _remaining} ->
-                {false, false, 0}
-
-              {:blocked, ttl_ms} ->
-                if ttl_ms > defer_threshold,
-                  do: {true, false, ttl_ms},
-                  else: {false, true, ttl_ms}
-            end
+            defer_or_sleep(Prism.RateLimit.check(webhook_id, method_str), defer_threshold)
 
           if should_defer do
             Logger.debug(
@@ -606,18 +578,13 @@ defmodule Prism.DiscordWorker do
 
                 Prism.RateLimit.record_success()
 
-                if batch_id do
-                  checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
-                  checkpoint_ttl = to_string(Prism.Config.checkpoint_ttl_seconds())
-                  msg_id_val = if is_binary(msg_id), do: msg_id, else: "done"
-
-                  Helpers.redix_command([
-                    "SETEX",
-                    checkpoint_key,
-                    checkpoint_ttl,
-                    msg_id_val
-                  ])
-                end
+                write_checkpoint(
+                  skip_checkpoint_write,
+                  batch_id,
+                  action,
+                  webhook_id,
+                  {:ok, msg_id}
+                )
 
                 Callbacks.publish_partial(action, target, batch_id, parent_msg_id, msg_id, nil)
 
@@ -631,6 +598,43 @@ defmodule Prism.DiscordWorker do
           end
         end
       end
+    end
+  end
+
+  defp write_checkpoint(skip?, batch_id, action, webhook_id, result) do
+    if batch_id && not skip? do
+      checkpoint_key = Helpers.checkpoint_key(action, batch_id, webhook_id)
+      checkpoint_ttl = to_string(Prism.Config.checkpoint_ttl_seconds())
+
+      case result do
+        {:ok, msg_id} when is_binary(msg_id) ->
+          Helpers.redix_command(["SETEX", checkpoint_key, checkpoint_ttl, msg_id])
+
+        {:ok, _} ->
+          Helpers.redix_command(["SETEX", checkpoint_key, checkpoint_ttl, "done"])
+
+        _ ->
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp dead_cache_hit?(action, webhook_id, message_id) do
+    action in ["edit", "delete"] and is_binary(message_id) and
+      DeadMessage.dead_message_cached?(webhook_id, message_id)
+  end
+
+  defp defer_or_sleep(rate_limit_result, defer_threshold) do
+    case rate_limit_result do
+      {:ok, _remaining} ->
+        {false, false, 0}
+
+      {:blocked, ttl} ->
+        if ttl > defer_threshold,
+          do: {true, false, ttl},
+          else: {false, true, ttl}
     end
   end
 end

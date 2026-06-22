@@ -51,15 +51,7 @@ defmodule Prism.RetryBroadway do
       payload_json = Helpers.get_payload_from_redis_data(fields)
 
       with {:ok, raw} <- Jason.decode(payload_json) do
-        batch_id = Map.get(raw, "batch_id", "unknown")
-        action = Map.get(raw, "action", "execute")
-
-        Logger.info(
-          "[Backpressure-Retry] Active Cloudflare block (remaining: #{delay_ms}ms). " <>
-            "Re-enqueueing retry for #{action} batch #{batch_id} to delayed queue."
-        )
-
-        Prism.DelayedQueue.enqueue(raw, delay_ms)
+        Helpers.re_enqueue_on_backpressure(raw, "-Retry", delay_ms)
       else
         _ ->
           Logger.error(
@@ -73,18 +65,7 @@ defmodule Prism.RetryBroadway do
     else
       polled_at = :os.system_time(:millisecond)
       [id, fields] = data
-
-      enqueued_at =
-        case String.split(id, "-") do
-          [timestamp_str, _] ->
-            case Integer.parse(timestamp_str) do
-              {ts, ""} -> ts
-              _ -> :os.system_time(:millisecond)
-            end
-
-          _ ->
-            :os.system_time(:millisecond)
-        end
+      enqueued_at = Helpers.extract_enqueued_at(id)
 
       payload_json = Helpers.get_payload_from_redis_data(fields)
 

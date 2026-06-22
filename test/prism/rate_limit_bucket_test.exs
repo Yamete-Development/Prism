@@ -18,7 +18,7 @@ defmodule Prism.RateLimit.BucketTest do
     {:ok, redix} = Redix.start_link(@redis_uri)
 
     # Clean up rate-limit bucket keys from prior runs.
-    case Redix.command(redix, ["KEYS", "rl:b:*"]) do
+    case Redix.command(redix, ["KEYS", "prism:rl:*"]) do
       {:ok, keys} when is_list(keys) and length(keys) > 0 ->
         Redix.command!(redix, ["DEL" | keys])
 
@@ -32,13 +32,13 @@ defmodule Prism.RateLimit.BucketTest do
   describe "bucket_key/2" do
     test "produces keys with correct prefix, webhook_id, and method" do
       key = Bucket.bucket_key("abc123", "post")
-      assert String.match?(key, ~r/^rl:b:[a-f0-9]+:abc123:post$/)
+      assert String.match?(key, ~r/^prism:rl:[a-f0-9]+:abc123:post$/)
 
       key2 = Bucket.bucket_key("abc123", "patch")
-      assert String.match?(key2, ~r/^rl:b:[a-f0-9]+:abc123:patch$/)
+      assert String.match?(key2, ~r/^prism:rl:[a-f0-9]+:abc123:patch$/)
 
       key3 = Bucket.bucket_key("abc123", "delete")
-      assert String.match?(key3, ~r/^rl:b:[a-f0-9]+:abc123:delete$/)
+      assert String.match?(key3, ~r/^prism:rl:[a-f0-9]+:abc123:delete$/)
     end
   end
 

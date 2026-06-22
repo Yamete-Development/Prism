@@ -67,33 +67,14 @@ defmodule Prism.FanoutBroadway do
 
       with {:ok, raw} <- Jason.decode(payload_json) do
         payload = Prism.FanoutBroadway.KeyExpansion.expand_keys(raw)
-        batch_id = Map.get(payload, "batch_id", "unknown")
-        action = Map.get(payload, "action", "execute")
-
-        Logger.info(
-          "[Backpressure] Active Cloudflare block (remaining: #{delay_ms}ms). " <>
-            "Re-enqueueing #{action} batch #{batch_id} to delayed queue."
-        )
-
-        Prism.DelayedQueue.enqueue(payload, delay_ms)
+        Helpers.re_enqueue_on_backpressure(payload, "", delay_ms)
       end
 
       message
     else
       polled_at = :os.system_time(:millisecond)
       [id, fields] = data
-
-      enqueued_at =
-        case String.split(id, "-") do
-          [timestamp_str, _] ->
-            case Integer.parse(timestamp_str) do
-              {ts, ""} -> ts
-              _ -> :os.system_time(:millisecond)
-            end
-
-          _ ->
-            :os.system_time(:millisecond)
-        end
+      enqueued_at = Helpers.extract_enqueued_at(id)
 
       payload_json = Helpers.get_payload_from_redis_data(fields)
 

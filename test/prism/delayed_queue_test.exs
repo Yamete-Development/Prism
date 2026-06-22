@@ -3,8 +3,8 @@ defmodule Prism.DelayedQueueTest do
 
   alias Prism.DelayedQueue
 
-  @zset_key "discord:fanout:delayed"
-  @stream_key "discord:fanout:stream:retries"
+  @zset_key "prism:delayed"
+  @stream_key "prism:stream:retries"
   @pubsub_channel "prism:wakeup"
 
   setup do

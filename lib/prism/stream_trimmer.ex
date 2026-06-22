@@ -12,6 +12,8 @@ defmodule Prism.StreamTrimmer do
   use GenServer
   require Logger
 
+  alias Prism.Helpers
+
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -62,12 +64,9 @@ defmodule Prism.StreamTrimmer do
   end
 
   defp trim_stream(stream, group, label) do
-    idx = :erlang.phash2(System.unique_integer(), Prism.Config.redix_pool_size())
-    redix = :"my_redix_#{idx}"
-
-    case get_safe_trim_id(redix, stream, group) do
+    case get_safe_trim_id(stream, group) do
       {:ok, safe_id} ->
-        case Redix.command(redix, ["XTRIM", stream, "MINID", "~", safe_id]) do
+        case Helpers.redix_command(["XTRIM", stream, "MINID", "~", safe_id]) do
           {:ok, trimmed} when is_integer(trimmed) and trimmed > 0 ->
             Logger.debug("[StreamTrimmer] Trimmed #{trimmed} entries from #{label} (#{stream})")
 
@@ -83,13 +82,13 @@ defmodule Prism.StreamTrimmer do
     end
   end
 
-  defp get_safe_trim_id(redix, stream, group) do
-    case Redix.command(redix, ["XPENDING", stream, group, "-", "+", "1"]) do
+  defp get_safe_trim_id(stream, group) do
+    case Helpers.redix_command(["XPENDING", stream, group, "-", "+", "1"]) do
       {:ok, [[min_id | _] | _]} when is_binary(min_id) ->
         {:ok, min_id}
 
       {:ok, []} ->
-        case Redix.command(redix, ["XREVRANGE", stream, "+", "-", "COUNT", "1"]) do
+        case Helpers.redix_command(["XREVRANGE", stream, "+", "-", "COUNT", "1"]) do
           {:ok, [[last_id | _] | _]} when is_binary(last_id) -> {:ok, last_id}
           {:ok, []} -> {:error, :empty_stream}
           {:error, reason} -> {:error, reason}

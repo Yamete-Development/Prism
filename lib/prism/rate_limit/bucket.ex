@@ -178,8 +178,23 @@ defmodule Prism.RateLimit.Bucket do
   @doc false
   def global_key, do: "#{key_prefix()}:global"
 
+  @doc false
+  def acquire_script, do: @acquire_script
+
+  @doc false
+  def acquire_pipeline_commands(targets) when is_list(targets) do
+    g_key = global_key()
+    now_ms = System.monotonic_time(:millisecond)
+    script = @acquire_script
+
+    Enum.map(targets, fn {webhook_id, method_str} ->
+      key = bucket_key(webhook_id, method_str)
+      ["EVAL", script, "2", key, g_key, to_string(now_ms)]
+    end)
+  end
+
   defp key_prefix do
     worker_id = :persistent_term.get(:prism_worker_id, "default")
-    "rl:b:#{worker_id}"
+    "prism:rl:#{worker_id}"
   end
 end

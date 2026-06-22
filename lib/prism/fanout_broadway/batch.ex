@@ -52,7 +52,83 @@ defmodule Prism.FanoutBroadway.Batch do
       )
     end
 
+    preflight_enabled = Prism.Config.preflight_batching_enabled?()
+    defer_threshold = Prism.Config.rate_limit_defer_threshold_ms()
     batch_max_concurrency = Prism.Config.batch_max_concurrency()
+
+    {targets_to_process, preflight_done_targets, _preflight_deferred_targets} =
+      if preflight_enabled do
+        case Prism.FanoutBroadway.Preflight.run(targets, action, batch_id) do
+          {:ok, preflights} ->
+            {ready, deferred, done} =
+              Enum.reduce(preflights, {[], [], []}, fn pf, {r_acc, d_acc, dn_acc} ->
+                case pf.preflight.checkpoint do
+                  {:done} ->
+                    {r_acc, d_acc, [{:done, pf} | dn_acc]}
+
+                  {:ok, msg_id} ->
+                    {r_acc, d_acc, [{:ok, msg_id, pf} | dn_acc]}
+
+                  :not_found ->
+                    case pf.preflight.rate_limit do
+                      {:blocked, ttl} when ttl > defer_threshold ->
+                        {r_acc, [%{pf | delay_ms: ttl} | d_acc], dn_acc}
+
+                      _ ->
+                        {[pf | r_acc], d_acc, dn_acc}
+                    end
+                end
+              end)
+
+            parent_msg_id = if action == "execute", do: parent_message_id, else: nil
+
+            for pf <- deferred do
+              target = pf.target
+              webhook_id = Map.get(target, "webhook_id")
+              message_id = Map.get(target, "message_id")
+
+              base_url =
+                "#{Prism.Config.discord_base_url()}/api/webhooks/#{webhook_id}/#{Map.get(target, "webhook_token")}"
+
+              thread_id = Map.get(target, "thread_id")
+
+              case Prism.DiscordWorker.HTTP.build_request(action, base_url, message_id, thread_id) do
+                {:ok, method, url} ->
+                  body =
+                    case Helpers.merge_overrides(discord_payload, target, action) do
+                      nil -> nil
+                      merged -> Jason.encode_to_iodata!(merged)
+                    end
+
+                  Prism.DiscordWorker.Retry.spawn_retry(
+                    action,
+                    target,
+                    method,
+                    url,
+                    [{"Content-Type", "application/json"}],
+                    body,
+                    webhook_id,
+                    message_id,
+                    batch_id,
+                    pf.delay_ms,
+                    1,
+                    parent_msg_id,
+                    :rate_limited
+                  )
+
+                {:error, _} ->
+                  :ok
+              end
+            end
+
+            {ready, done, []}
+
+          {:error, _reason} ->
+            {targets, [], []}
+        end
+      else
+        {targets, [], []}
+      end
 
     OpenTelemetry.Tracer.with_span "prism.worker.process_batch" do
       OpenTelemetry.Tracer.set_attributes([
@@ -65,29 +141,133 @@ defmodule Prism.FanoutBroadway.Batch do
       ctx = OpenTelemetry.Ctx.get_current()
 
       results =
-        Task.async_stream(
-          targets,
-          fn target ->
+        case targets_to_process do
+          [] ->
+            []
+
+          [single_pf] when is_map(single_pf) and preflight_enabled ->
             OpenTelemetry.Ctx.attach(ctx)
 
-            Prism.DiscordWorker.process_target(
-              action,
-              target,
-              discord_payload,
-              batch_id,
-              polled_at,
-              enqueued_at,
-              parent_message_id
+            result =
+              Prism.DiscordWorker.process_target(
+                action,
+                single_pf.target,
+                discord_payload,
+                batch_id,
+                polled_at,
+                enqueued_at,
+                parent_message_id,
+                preflight: single_pf.preflight,
+                skip_checkpoint_write: true
+              )
+
+            [{:ok, result}]
+
+          [single_target] ->
+            OpenTelemetry.Ctx.attach(ctx)
+
+            result =
+              Prism.DiscordWorker.process_target(
+                action,
+                single_target,
+                discord_payload,
+                batch_id,
+                polled_at,
+                enqueued_at,
+                parent_message_id
+              )
+
+            [{:ok, result}]
+
+          multiple_targets ->
+            Task.async_stream(
+              multiple_targets,
+              fn item ->
+                OpenTelemetry.Ctx.attach(ctx)
+
+                if preflight_enabled do
+                  Prism.DiscordWorker.process_target(
+                    action,
+                    item.target,
+                    discord_payload,
+                    batch_id,
+                    polled_at,
+                    enqueued_at,
+                    parent_message_id,
+                    preflight: item.preflight,
+                    skip_checkpoint_write: true
+                  )
+                else
+                  Prism.DiscordWorker.process_target(
+                    action,
+                    item,
+                    discord_payload,
+                    batch_id,
+                    polled_at,
+                    enqueued_at,
+                    parent_message_id
+                  )
+                end
+              end,
+              max_concurrency: batch_max_concurrency,
+              timeout: Prism.Config.task_timeout_ms()
             )
-          end,
-          max_concurrency: batch_max_concurrency,
-          timeout: Prism.Config.task_timeout_ms()
-        )
-        |> Enum.to_list()
+            |> Enum.to_list()
+        end
+
+      # Post-flight: batch checkpoint writes for successful targets
+      if preflight_enabled do
+        checkpoint_ttl = to_string(Prism.Config.checkpoint_ttl_seconds())
+
+        checkpoint_commands =
+          targets_to_process
+          |> Enum.zip(results)
+          |> Enum.filter(fn {_target_pf, result_tuple} ->
+            case result_tuple do
+              {:ok, {:ok, _}} -> true
+              {:ok, result} when is_tuple(result) -> elem(result, 0) == :ok
+              _ -> false
+            end
+          end)
+          |> Enum.map(fn {item, {:ok, worker_result}} ->
+            ck_result =
+              case worker_result do
+                {:ok, msg_id} when is_binary(msg_id) -> msg_id
+                {:ok, _} -> "done"
+                _ -> "done"
+              end
+
+            webhook_id = item.webhook_id
+            ck = Helpers.checkpoint_key(action, batch_id, webhook_id)
+            ["SETEX", ck, checkpoint_ttl, ck_result]
+          end)
+
+        if checkpoint_commands != [] do
+          Helpers.redix_pipeline(checkpoint_commands)
+        end
+      end
+
+      # Build combined target list and results for aggregation
+      {aggregation_targets, aggregation_results} =
+        if preflight_enabled do
+          ready_targets = Enum.map(targets_to_process, fn pf -> pf.target end)
+
+          {done_target_pfs, done_result_pfs} =
+            preflight_done_targets
+            |> Enum.map(fn
+              {:done, pf} -> {pf.target, {:ok, {:ok, nil}}}
+              {:ok, msg_id, pf} -> {pf.target, {:ok, {:ok, msg_id}}}
+            end)
+            |> Enum.unzip()
+
+          {ready_targets ++ done_target_pfs, results ++ done_result_pfs}
+        else
+          {targets_to_process, results}
+        end
 
       {successes, failures} =
-        targets
-        |> Enum.zip(results)
+        aggregation_targets
+        |> Enum.zip(aggregation_results)
         |> Enum.reduce({[], []}, fn {target, result_tuple}, {succ_acc, fail_acc} ->
           worker_result =
             case result_tuple do
@@ -120,44 +300,7 @@ defmodule Prism.FanoutBroadway.Batch do
               {[succ_info | succ_acc], fail_acc}
 
             {:error, reason} ->
-              {error_string, error_type, extra} =
-                case reason do
-                  {:rate_limited, retry_after_ms} ->
-                    {"rate_limited", "transient", %{"retry_after_ms" => retry_after_ms}}
-
-                  :invalid_webhook ->
-                    {"invalid_webhook", "permanent", %{}}
-
-                  :message_not_found ->
-                    {"message_not_found", "permanent", %{}}
-
-                  :bad_request ->
-                    {"bad_request", "transient", %{}}
-
-                  :missing_webhook ->
-                    {"missing_webhook", "permanent", %{}}
-
-                  :invalid_action ->
-                    {"invalid_action", "permanent", %{}}
-
-                  {:permanent, detail} ->
-                    {"permanent_error", "permanent", %{"detail" => inspect(detail)}}
-
-                  {:server_error, _} ->
-                    {"server_error", "transient", %{}}
-
-                  :network_error ->
-                    {"network_error", "transient", %{}}
-
-                  :rate_limited ->
-                    {"rate_limited", "transient", %{}}
-
-                  :task_crashed ->
-                    {"task_crashed", "transient", %{}}
-
-                  _ ->
-                    {inspect(reason), "transient", %{}}
-                end
+              {error_string, error_type, extra} = Prism.ErrorMapping.to_error_info(reason)
 
               fail_info =
                 base_info
@@ -205,16 +348,7 @@ defmodule Prism.FanoutBroadway.Batch do
 
       callback_stream = Prism.Config.stream_callbacks()
 
-      Helpers.redix_command([
-        "XADD",
-        callback_stream,
-        "MAXLEN",
-        "~",
-        "100000",
-        "*",
-        "payload",
-        payload
-      ])
+      Helpers.publish_callback(payload)
 
       Logger.debug("Published callback to #{callback_stream} for batch #{batch_id}#{parent_log}")
 
@@ -295,16 +429,17 @@ defmodule Prism.FanoutBroadway.Batch do
                    Exception.format_stacktrace(__STACKTRACE__)
                )
 
-               payload = %{
-                 "action" => action,
-                 "batch_id" => batch_id,
-                 "payload" => discord_payload,
-                 "targets" => targets,
-                 "message_id" => parent_message_id,
-                 "metadata" => metadata,
-                 "hub_id" => hub_id,
-                 "shard_index" => shard_index
-               }
+               payload =
+                 build_re_enqueue_payload(
+                   action,
+                   batch_id,
+                   discord_payload,
+                   targets,
+                   parent_message_id,
+                   metadata,
+                   hub_id,
+                   shard_index
+                 )
 
                Prism.DelayedQueue.enqueue(payload, 5_000)
            end
@@ -318,19 +453,42 @@ defmodule Prism.FanoutBroadway.Batch do
             "Re-enqueueing to delayed queue (200ms)."
         )
 
-        payload = %{
-          "action" => action,
-          "batch_id" => batch_id,
-          "payload" => discord_payload,
-          "targets" => targets,
-          "message_id" => parent_message_id,
-          "metadata" => metadata,
-          "hub_id" => hub_id,
-          "shard_index" => shard_index
-        }
+        payload =
+          build_re_enqueue_payload(
+            action,
+            batch_id,
+            discord_payload,
+            targets,
+            parent_message_id,
+            metadata,
+            hub_id,
+            shard_index
+          )
 
         Prism.DelayedQueue.enqueue(payload, 200)
     end
+  end
+
+  defp build_re_enqueue_payload(
+         action,
+         batch_id,
+         discord_payload,
+         targets,
+         parent_message_id,
+         metadata,
+         hub_id,
+         shard_index
+       ) do
+    %{
+      "action" => action,
+      "batch_id" => batch_id,
+      "payload" => discord_payload,
+      "targets" => targets,
+      "message_id" => parent_message_id,
+      "metadata" => metadata,
+      "hub_id" => hub_id,
+      "shard_index" => shard_index
+    }
   end
 
   defp store_reply_index(parent_message_id, successes) when is_binary(parent_message_id) do

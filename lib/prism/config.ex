@@ -18,28 +18,28 @@ defmodule Prism.Config do
 
   @doc "Fast lane stream key"
   def stream_fast,
-    do: Application.get_env(:prism, :redis_stream_fast, "discord:fanout:stream:fast")
+    do: Application.get_env(:prism, :redis_stream_fast, "prism:stream:fast")
 
   @doc "Slow lane stream key"
   def stream_slow,
-    do: Application.get_env(:prism, :redis_stream_slow, "discord:fanout:stream:slow")
+    do: Application.get_env(:prism, :redis_stream_slow, "prism:stream:slow")
 
   @doc "Retry stream key"
   def stream_retries,
-    do: Application.get_env(:prism, :redis_retry_stream, "discord:fanout:stream:retries")
+    do: Application.get_env(:prism, :redis_retry_stream, "prism:stream:retries")
 
   @doc "Callback stream key"
   def stream_callbacks,
-    do: Application.get_env(:prism, :redis_callback_stream, "discord:fanout:callbacks")
+    do: Application.get_env(:prism, :redis_callback_stream, "prism:stream:callbacks")
 
   @doc "Redis consumer group name"
-  def redis_group, do: Application.get_env(:prism, :redis_group, "elixir_fanout_pool")
+  def redis_group, do: Application.get_env(:prism, :redis_group, "prism:cg:fanout")
 
   # ── Delayed queue ──────────────────────────────────────────────────────
 
   @doc "Delayed queue ZSET key"
   def delayed_zset_key,
-    do: Application.get_env(:prism, :delayed_zset_key, "discord:fanout:delayed")
+    do: Application.get_env(:prism, :delayed_zset_key, "prism:delayed")
 
   @doc "PubSub wakeup channel"
   def pubsub_channel, do: Application.get_env(:prism, :pubsub_channel, "prism:wakeup")
@@ -157,7 +157,7 @@ defmodule Prism.Config do
 
   @doc "Redis key prefix for dead message cache"
   def dead_message_cache_prefix,
-    do: Application.get_env(:prism, :dead_message_cache_prefix, "dead_msg:")
+    do: Application.get_env(:prism, :dead_message_cache_prefix, "prism:dead:")
 
   @doc "TTL for dead message cache entries (seconds)"
   def dead_message_cache_ttl,
@@ -172,7 +172,7 @@ defmodule Prism.Config do
 
   @doc "Consumer group for callback stream trimming"
   def callback_consumer_group,
-    do: Application.get_env(:prism, :callback_consumer_group, "bot_team")
+    do: Application.get_env(:prism, :callback_consumer_group, "prism:cg:callbacks")
 
   @doc "Stream trim interval in ms"
   def stream_trim_interval_ms,
@@ -211,6 +211,10 @@ defmodule Prism.Config do
   @doc "Batch max concurrency"
   def batch_max_concurrency, do: Application.get_env(:prism, :batch_max_concurrency, 80)
 
+  @doc "Enable/disable preflight Redis batching (pipelines checkpoint + rate-limit reads before fan-out)"
+  def preflight_batching_enabled?,
+    do: Application.get_env(:prism, :preflight_batching_enabled, true)
+
   # ── SSE / Dashboard ────────────────────────────────────────────────────
 
   @doc "Enable/disable SSE publishing"
@@ -218,7 +222,7 @@ defmodule Prism.Config do
 
   @doc "SSE topic prefix for Redis PubSub"
   def sse_topic_prefix,
-    do: Application.get_env(:prism, :redis_sse_topic_prefix, "dashboard:stream:hub:")
+    do: Application.get_env(:prism, :redis_sse_topic_prefix, "prism:sse:")
 
   # ── Reply index ────────────────────────────────────────────────────────
 
@@ -230,7 +234,7 @@ defmodule Prism.Config do
     do: Application.get_env(:prism, :callback_include_parent_message_id, true)
 
   @doc "Reply index Redis key prefix"
-  def reply_index_prefix, do: Application.get_env(:prism, :reply_index_prefix, "p:d")
+  def reply_index_prefix, do: Application.get_env(:prism, :reply_index_prefix, "prism")
 
   @doc "Reply index TTL in seconds"
   def reply_index_ttl_seconds,
@@ -251,4 +255,7 @@ defmodule Prism.Config do
 
   @doc "Cancel TTL seconds"
   def cancel_ttl, do: Application.get_env(:prism, :cancel_ttl, 300)
+
+  @doc "Callback stream MAXLEN (~ approximate trimming)"
+  def callback_stream_maxlen, do: Application.get_env(:prism, :callback_stream_maxlen, 100_000)
 end

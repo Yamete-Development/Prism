@@ -34,12 +34,12 @@ if config_env() != :test do
       String.to_integer(System.get_env("PRISM_FINCH_IDLE_TIMEOUT_MS") || "60000"),
     finch_keepalive_ms: String.to_integer(System.get_env("PRISM_FINCH_KEEPALIVE_MS") || "30000"),
     discord_base_url: System.get_env("PRISM_DISCORD_BASE_URL") || "https://discord.com",
-    redis_stream_fast: System.get_env("REDIS_STREAM_FAST") || "discord:fanout:stream:fast",
-    redis_stream_slow: System.get_env("REDIS_STREAM_SLOW") || "discord:fanout:stream:slow",
-    redis_retry_stream: System.get_env("REDIS_RETRY_STREAM") || "discord:fanout:stream:retries",
-    redis_callback_stream: System.get_env("REDIS_CALLBACK_STREAM") || "discord:fanout:callbacks",
-    redis_group: System.get_env("REDIS_GROUP") || "elixir_fanout_pool",
-    delayed_zset_key: System.get_env("PRISM_DELAYED_ZSET_KEY") || "discord:fanout:delayed",
+    redis_stream_fast: System.get_env("REDIS_STREAM_FAST") || "prism:stream:fast",
+    redis_stream_slow: System.get_env("REDIS_STREAM_SLOW") || "prism:stream:slow",
+    redis_retry_stream: System.get_env("REDIS_RETRY_STREAM") || "prism:stream:retries",
+    redis_callback_stream: System.get_env("REDIS_CALLBACK_STREAM") || "prism:stream:callbacks",
+    redis_group: System.get_env("REDIS_GROUP") || "prism:cg:fanout",
+    delayed_zset_key: System.get_env("PRISM_DELAYED_ZSET_KEY") || "prism:delayed",
     pubsub_channel: System.get_env("PRISM_PUBSUB_CHANNEL") || "prism:wakeup",
     delayed_scheduler_error_retry_ms:
       String.to_integer(System.get_env("PRISM_DELAYED_SCHEDULER_ERROR_RETRY_MS") || "5000"),
@@ -90,22 +90,22 @@ if config_env() != :test do
     key_expansion_enabled: parse_bool.(System.get_env("PRISM_KEY_EXPANSION_ENABLED") || "true"),
     cancel_checker_enabled: parse_bool.(System.get_env("PRISM_CANCEL_CHECKER_ENABLED") || "true"),
     stream_trimmer_enabled: parse_bool.(System.get_env("PRISM_STREAM_TRIMMER_ENABLED") || "true"),
-    dead_message_cache_prefix: System.get_env("PRISM_DEAD_MESSAGE_CACHE_PREFIX") || "dead_msg:",
+    dead_message_cache_prefix: System.get_env("PRISM_DEAD_MESSAGE_CACHE_PREFIX") || "prism:dead:",
     dead_message_cache_ttl:
       String.to_integer(System.get_env("PRISM_DEAD_MESSAGE_CACHE_TTL") || "1800"),
     cancel_prefix: System.get_env("PRISM_CANCEL_PREFIX") || "prism:cancel:",
-    callback_consumer_group: System.get_env("PRISM_CALLBACK_CONSUMER_GROUP") || "bot_team",
+    callback_consumer_group:
+      System.get_env("PRISM_CALLBACK_CONSUMER_GROUP") || "prism:cg:callbacks",
     stream_trim_interval_ms:
       String.to_integer(System.get_env("PRISM_STREAM_TRIM_INTERVAL_MS") || "30000"),
     callback_include_parent_message_id:
       parse_bool.(System.get_env("PRISM_INCLUDE_PARENT_MESSAGE_ID")),
     reply_index_enabled: parse_bool.(System.get_env("PRISM_REPLY_INDEX_ENABLED")),
-    reply_index_prefix: System.get_env("PRISM_REPLY_INDEX_PREFIX") || "p:d",
+    reply_index_prefix: System.get_env("PRISM_REPLY_INDEX_PREFIX") || "prism",
     reply_index_ttl_seconds:
       String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800"),
     redis_sse_enabled: parse_bool.(System.get_env("PRISM_REDIS_SSE_ENABLED") || "false"),
-    redis_sse_topic_prefix:
-      System.get_env("PRISM_REDIS_SSE_TOPIC_PREFIX") || "dashboard:stream:hub:",
+    redis_sse_topic_prefix: System.get_env("PRISM_REDIS_SSE_TOPIC_PREFIX") || "prism:sse:",
     cancel_ttl: String.to_integer(System.get_env("PRISM_CANCEL_TTL", "300")),
     cluster_topology: System.get_env("PRISM_CLUSTER_TOPOLOGY") || "prism_cluster"
 end

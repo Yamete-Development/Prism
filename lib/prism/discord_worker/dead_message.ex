@@ -20,15 +20,10 @@ defmodule Prism.DiscordWorker.DeadMessage do
     if Prism.Config.dead_message_cache_enabled?() do
       prefix = Prism.Config.dead_message_cache_prefix()
 
-      case Helpers.redix_command(["EXISTS", "#{prefix}#{webhook_id}:#{message_id}"]) do
-        {:ok, 1} ->
-          true
-
-        _ ->
-          case Helpers.redix_command(["EXISTS", "#{prefix}#{message_id}"]) do
-            {:ok, 1} -> true
-            _ -> false
-          end
+      if Helpers.key_exists?("#{prefix}#{webhook_id}:#{message_id}") do
+        true
+      else
+        Helpers.key_exists?("#{prefix}#{message_id}")
       end
     else
       false

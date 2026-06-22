@@ -35,16 +35,7 @@ defmodule Prism.DiscordWorker.Callbacks do
 
       {successes, failures} =
         if error_reason do
-          {error_string, error_type} =
-            cond do
-              error_reason == :invalid_webhook -> {"invalid_webhook", "permanent"}
-              error_reason == :message_not_found -> {"message_not_found", "permanent"}
-              error_reason == :bad_request -> {"bad_request", "transient"}
-              error_reason == :server_error -> {"server_error", "transient"}
-              error_reason == :network_error -> {"network_error", "transient"}
-              error_reason == :permanent -> {"permanent_error", "permanent"}
-              true -> {inspect(error_reason), "transient"}
-            end
+          {error_string, error_type, _extra} = Prism.ErrorMapping.to_error_info(error_reason)
 
           {[], [Map.merge(base_info, %{"error" => error_string, "error_type" => error_type})]}
         else
@@ -72,18 +63,7 @@ defmodule Prism.DiscordWorker.Callbacks do
 
       json = Jason.encode!(payload)
 
-      callback_stream = Prism.Config.stream_callbacks()
-
-      Helpers.redix_command([
-        "XADD",
-        callback_stream,
-        "MAXLEN",
-        "~",
-        "100000",
-        "*",
-        "payload",
-        json
-      ])
+      Helpers.publish_callback(json)
     end
   end
 end

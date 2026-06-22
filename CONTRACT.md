@@ -4,7 +4,7 @@ Prism acts as a consumer of Redis Streams to process webhook dispatch requests, 
 
 ## Enqueueing Work (Input Stream)
 
-To dispatch messages, push JSON payloads to your configured Redis stream (default: `discord:fanout:stream:fast`).
+To dispatch messages, push JSON payloads to your configured Redis stream (default: `prism:stream:fast`).
 
 ### Payload Schema
 
@@ -90,7 +90,7 @@ Short keys that appear at multiple nesting levels (e.g. `m` for `message_id` at 
 
 ## Callbacks (Output Stream)
 
-Once a batch is fully processed (or hits maximum retries), Prism writes a callback event to the configured callback stream (default: `discord:fanout:callbacks`).
+Once a batch is fully processed (or hits maximum retries), Prism writes a callback event to the configured callback stream (default: `prism:stream:callbacks`).
 
 ### Callback Schema
 
@@ -142,10 +142,10 @@ All stream keys and Redis identifiers are configurable. See `.env.example` for t
 
 | Config Key | Env Var | Default |
 |---|---|---|
-| Fast lane stream | `REDIS_STREAM_FAST` | `discord:fanout:stream:fast` |
-| Slow lane stream | `REDIS_STREAM_SLOW` | `discord:fanout:stream:slow` |
-| Retry stream | `REDIS_RETRY_STREAM` | `discord:fanout:stream:retries` |
-| Callback stream | `REDIS_CALLBACK_STREAM` | `discord:fanout:callbacks` |
-| Consumer group | `REDIS_GROUP` | `elixir_fanout_pool` |
-| Delayed queue ZSET | `PRISM_DELAYED_ZSET_KEY` | `discord:fanout:delayed` |
+| Fast lane stream | `REDIS_STREAM_FAST` | `prism:stream:fast` |
+| Slow lane stream | `REDIS_STREAM_SLOW` | `prism:stream:slow` |
+| Retry stream | `REDIS_RETRY_STREAM` | `prism:stream:retries` |
+| Callback stream | `REDIS_CALLBACK_STREAM` | `prism:stream:callbacks` |
+| Consumer group | `REDIS_GROUP` | `prism:cg:fanout` |
+| Delayed queue ZSET | `PRISM_DELAYED_ZSET_KEY` | `prism:delayed` |
 | PubSub wakeup channel | `PRISM_PUBSUB_CHANNEL` | `prism:wakeup` |

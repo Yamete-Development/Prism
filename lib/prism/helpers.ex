@@ -58,25 +58,13 @@ defmodule Prism.Helpers do
   def empty_discord_payload?(nil), do: true
 
   def empty_discord_payload?(payload) when is_map(payload) do
-    content = Map.get(payload, "content")
-    embeds = Map.get(payload, "embeds")
-    components = Map.get(payload, "components")
-
-    (is_nil(content) or content == "") and
-      is_nil_or_empty_list?(embeds) and
-      is_nil_or_empty_list?(components)
+    empty_payload_fields?(payload)
   end
 
   def empty_discord_payload?(body) do
     case Jason.decode(body) do
       {:ok, decoded} when is_map(decoded) ->
-        content = Map.get(decoded, "content")
-        embeds = Map.get(decoded, "embeds")
-        components = Map.get(decoded, "components")
-
-        (is_nil(content) or content == "") and
-          is_nil_or_empty_list?(embeds) and
-          is_nil_or_empty_list?(components)
+        empty_payload_fields?(decoded)
 
       _ ->
         false
@@ -110,7 +98,122 @@ defmodule Prism.Helpers do
     :post
   end
 
+  # ── Checkpoint helpers ──────────────────────────────────────────────
+
+  @doc """
+  Builds a Redis checkpoint key from batch metadata.
+   Format: `prism:ck:<action>:<batch_id>:<webhook_id>`
+  """
+  @spec checkpoint_key(String.t(), String.t(), String.t()) :: String.t()
+  def checkpoint_key(action, batch_id, webhook_id),
+    do: "prism:ck:#{action}:#{batch_id}:#{webhook_id}"
+
+  # ── Shared backpressure re-enqueue ────────────────────────────────────
+
+  @doc """
+  Logs a backpressure re-enqueue event and enqueues the payload to the delayed queue.
+  """
+  @spec re_enqueue_on_backpressure(map(), String.t(), integer()) :: :ok
+  def re_enqueue_on_backpressure(payload, label, delay_ms) do
+    batch_id = Map.get(payload, "batch_id", "unknown")
+    action = Map.get(payload, "action", "execute")
+
+    Logger.info(
+      "[Backpressure#{label}] Active Cloudflare block (remaining: #{delay_ms}ms). " <>
+        "Re-enqueueing #{action} batch #{batch_id} to delayed queue."
+    )
+
+    Prism.DelayedQueue.enqueue(payload, delay_ms)
+  end
+
+  # ── Stream timestamp extraction ────────────────────────────────────────
+
+  @doc """
+  Extracts the enqueue timestamp from a Redis stream message ID.
+  Returns the timestamp as an integer, or the current time if parsing fails.
+  """
+  @spec extract_enqueued_at(String.t()) :: integer()
+  def extract_enqueued_at(id) do
+    case String.split(id, "-") do
+      [timestamp_str, _] ->
+        case Integer.parse(timestamp_str) do
+          {ts, ""} -> ts
+          _ -> :os.system_time(:millisecond)
+        end
+
+      _ ->
+        :os.system_time(:millisecond)
+    end
+  end
+
+  # ── Key existence check ─────────────────────────────────────────────────
+
+  @doc """
+  Checks whether a Redis key exists. Returns `true` or `false`, logging on error.
+  """
+  @spec key_exists?(String.t()) :: boolean()
+  def key_exists?(redis_key) do
+    case redix_command(["EXISTS", redis_key]) do
+      {:ok, 1} ->
+        true
+
+      {:ok, 0} ->
+        false
+
+      {:error, reason} ->
+        Logger.warning("Exists check failed for #{redis_key}: #{inspect(reason)}")
+        false
+    end
+  end
+
+  # ── Callback publishing ─────────────────────────────────────────────────
+
+  @doc """
+  Publishes a JSON-encoded callback payload to the callback stream with MAXLEN trimming.
+  """
+  @spec publish_callback(binary()) :: :ok | {:error, term()}
+  def publish_callback(json_payload) do
+    callback_stream = Prism.Config.stream_callbacks()
+    maxlen = to_string(Prism.Config.callback_stream_maxlen())
+
+    redix_command([
+      "XADD",
+      callback_stream,
+      "MAXLEN",
+      "~",
+      maxlen,
+      "*",
+      "payload",
+      json_payload
+    ])
+  end
+
+  # ── Overrides merge ─────────────────────────────────────────────────────
+
+  @doc """
+  Merges a target's `overrides` into the base content/body map.
+  Returns the merged map, or nil if the target is a delete action.
+  """
+  @spec merge_overrides(map(), map(), String.t()) :: map() | nil
+  def merge_overrides(content, target, action) do
+    if action == "delete" do
+      nil
+    else
+      Map.merge(content, Map.get(target, "overrides", %{}))
+    end
+  end
+
   # ── Private ────────────────────────────────────────────────────────────
+
+  defp empty_payload_fields?(map) do
+    content = Map.get(map, "content")
+    embeds = Map.get(map, "embeds")
+    components = Map.get(map, "components")
+
+    (is_nil(content) or content == "") and
+      is_nil_or_empty_list?(embeds) and
+      is_nil_or_empty_list?(components)
+  end
 
   defp is_nil_or_empty_list?(nil), do: true
   defp is_nil_or_empty_list?(list) when is_list(list), do: list == []
