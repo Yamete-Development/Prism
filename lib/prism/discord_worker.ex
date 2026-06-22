@@ -633,6 +633,7 @@ defmodule Prism.DiscordWorker do
       base_info =
         %{
           "webhook_id" => target["webhook_id"],
+          "message_id" => target["message_id"],
           "channel_id" => target["channel_id"],
           "guild_id" => target["guild_id"],
           "connection_id" => target["connection_id"],

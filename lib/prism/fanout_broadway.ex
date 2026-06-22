@@ -343,6 +343,7 @@ defmodule Prism.FanoutBroadway do
 
           base_info = %{
             "webhook_id" => webhook_id,
+            "message_id" => Map.get(target, "message_id"),
             "connection_id" => conn_id,
             "hub_id" => hub_id,
             "channel_id" => channel_id,
