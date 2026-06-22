@@ -53,7 +53,6 @@ defmodule Prism.DiscordWorker.Retry do
       "batch_id" => batch_id,
       "attempt" => attempt,
       "parent_msg_id" => parent_msg_id,
-      "source_message_id" => parent_msg_id,
       "reason" => to_string(reason)
     }
 
