@@ -402,34 +402,47 @@ defmodule Prism.DiscordWorker do
             publish_partial(action, target, batch_id, parent_msg_id, nil, :message_not_found)
           end
         else
-          result = do_http_request(method, method_str, url, headers, body, webhook_id, message_id)
+          {should_defer, should_sleep, rate_limit_delay_ms} =
+            case Prism.RateLimit.check(webhook_id, method_str) do
+              {:ok, _remaining} -> {false, false, 0}
+              {:blocked, ttl_ms} when ttl_ms > 10000 -> {true, false, ttl_ms}
+              {:blocked, ttl_ms} -> {false, true, ttl_ms}
+            end
 
-          case result do
-            {:error, {:rate_limited, delay_ms}} ->
-              spawn_retry(
-                action,
-                target,
-                method,
-                url,
-                headers,
-                body,
-                webhook_id,
-                message_id,
-                batch_id,
-                delay_ms,
-                attempt + 1,
-                parent_msg_id,
-                :rate_limited
+          if should_defer do
+            Logger.debug(
+              "Retry pre-flight rate limit triggered for webhook_id=#{webhook_id} with long TTL=#{rate_limit_delay_ms}ms. Rescheduling immediately."
+            )
+
+            spawn_retry(
+              action,
+              target,
+              method,
+              url,
+              headers,
+              body,
+              webhook_id,
+              message_id,
+              batch_id,
+              rate_limit_delay_ms,
+              attempt,
+              parent_msg_id,
+              :rate_limited
+            )
+          else
+            if should_sleep do
+              Logger.debug(
+                "Retry pre-flight rate limit triggered for webhook_id=#{webhook_id}. Sleeping for #{rate_limit_delay_ms}ms."
               )
 
-            {:error, {:server_error, _}} ->
-              if attempt >= 3 do
-                publish_partial(action, target, batch_id, parent_msg_id, nil, :server_error)
-              else
-                backoff_ms = 2000 * attempt
-                jitter_ms = :rand.uniform(1000)
-                delay_ms = backoff_ms + jitter_ms
+              Process.sleep(rate_limit_delay_ms)
+            end
 
+            result =
+              do_http_request(method, method_str, url, headers, body, webhook_id, message_id)
+
+            case result do
+              {:error, {:rate_limited, delay_ms}} ->
                 spawn_retry(
                   action,
                   target,
@@ -443,101 +456,126 @@ defmodule Prism.DiscordWorker do
                   delay_ms,
                   attempt + 1,
                   parent_msg_id,
-                  :server_error
+                  :rate_limited
                 )
-              end
 
-            {:error, :network_error} ->
-              if attempt >= 5 do
-                publish_partial(action, target, batch_id, parent_msg_id, nil, :network_error)
-              else
-                backoff_ms = 1000 * attempt
-                jitter_ms = :rand.uniform(500)
-                delay_ms = backoff_ms + jitter_ms
-
-                spawn_retry(
-                  action,
-                  target,
-                  method,
-                  url,
-                  headers,
-                  body,
-                  webhook_id,
-                  message_id,
-                  batch_id,
-                  delay_ms,
-                  attempt + 1,
-                  parent_msg_id,
-                  :network_error
-                )
-              end
-
-            {:error, :message_not_found_transient} ->
-              if attempt >= 5 do
-                if method == :delete do
-                  Logger.info(
-                    "Webhook_id=#{webhook_id} still 10008 on attempt #{attempt} for delete, assuming deleted."
-                  )
-
-                  publish_partial(action, target, batch_id, parent_msg_id, nil, nil)
+              {:error, {:server_error, _}} ->
+                if attempt >= 3 do
+                  publish_partial(action, target, batch_id, parent_msg_id, nil, :server_error)
                 else
-                  publish_partial(
+                  backoff_ms = 2000 * attempt
+                  jitter_ms = :rand.uniform(1000)
+                  delay_ms = backoff_ms + jitter_ms
+
+                  spawn_retry(
                     action,
                     target,
+                    method,
+                    url,
+                    headers,
+                    body,
+                    webhook_id,
+                    message_id,
                     batch_id,
+                    delay_ms,
+                    attempt + 1,
                     parent_msg_id,
-                    nil,
-                    :message_not_found
+                    :server_error
                   )
                 end
-              else
-                backoff_ms = 1000 * attempt
-                jitter_ms = :rand.uniform(500)
-                delay_ms = backoff_ms + jitter_ms
 
-                spawn_retry(
-                  action,
-                  target,
-                  method,
-                  url,
-                  headers,
-                  body,
-                  webhook_id,
-                  message_id,
-                  batch_id,
-                  delay_ms,
-                  attempt + 1,
-                  parent_msg_id,
-                  :message_not_found_transient
+              {:error, :network_error} ->
+                if attempt >= 5 do
+                  publish_partial(action, target, batch_id, parent_msg_id, nil, :network_error)
+                else
+                  backoff_ms = 1000 * attempt
+                  jitter_ms = :rand.uniform(500)
+                  delay_ms = backoff_ms + jitter_ms
+
+                  spawn_retry(
+                    action,
+                    target,
+                    method,
+                    url,
+                    headers,
+                    body,
+                    webhook_id,
+                    message_id,
+                    batch_id,
+                    delay_ms,
+                    attempt + 1,
+                    parent_msg_id,
+                    :network_error
+                  )
+                end
+
+              {:error, :message_not_found_transient} ->
+                if attempt >= 5 do
+                  if method == :delete do
+                    Logger.info(
+                      "Webhook_id=#{webhook_id} still 10008 on attempt #{attempt} for delete, assuming deleted."
+                    )
+
+                    publish_partial(action, target, batch_id, parent_msg_id, nil, nil)
+                  else
+                    publish_partial(
+                      action,
+                      target,
+                      batch_id,
+                      parent_msg_id,
+                      nil,
+                      :message_not_found
+                    )
+                  end
+                else
+                  backoff_ms = 1000 * attempt
+                  jitter_ms = :rand.uniform(500)
+                  delay_ms = backoff_ms + jitter_ms
+
+                  spawn_retry(
+                    action,
+                    target,
+                    method,
+                    url,
+                    headers,
+                    body,
+                    webhook_id,
+                    message_id,
+                    batch_id,
+                    delay_ms,
+                    attempt + 1,
+                    parent_msg_id,
+                    :message_not_found_transient
+                  )
+                end
+
+              # ★ Permanent errors: stop retrying immediately
+              {:error, :permanent} ->
+                Logger.warning("Permanent error for webhook_id=#{webhook_id}, not retrying.")
+                publish_partial(action, target, batch_id, parent_msg_id, nil, :permanent)
+
+              {:ok, msg_id} ->
+                Logger.info(
+                  "Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!"
                 )
-              end
 
-            # ★ Permanent errors: stop retrying immediately
-            {:error, :permanent} ->
-              Logger.warning("Permanent error for webhook_id=#{webhook_id}, not retrying.")
-              publish_partial(action, target, batch_id, parent_msg_id, nil, :permanent)
+                Prism.RateLimit.record_success()
 
-            {:ok, msg_id} ->
-              Logger.info(
-                "Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!"
-              )
+                if batch_id do
+                  checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
+                  msg_id_val = if is_binary(msg_id), do: msg_id, else: "done"
+                  redix_command(["SETEX", checkpoint_key, "86400", msg_id_val])
+                end
 
-              Prism.RateLimit.record_success()
+                publish_partial(action, target, batch_id, parent_msg_id, msg_id, nil)
 
-              if batch_id do
-                checkpoint_key = "checkpoint:#{action}:#{batch_id}:#{webhook_id}"
-                msg_id_val = if is_binary(msg_id), do: msg_id, else: "done"
-                redix_command(["SETEX", checkpoint_key, "86400", msg_id_val])
-              end
+              other ->
+                Logger.error(
+                  "Unexpected retry result for webhook_id=#{webhook_id}: #{inspect(other)}"
+                )
 
-              publish_partial(action, target, batch_id, parent_msg_id, msg_id, nil)
-
-            other ->
-              Logger.error(
-                "Unexpected retry result for webhook_id=#{webhook_id}: #{inspect(other)}"
-              )
-
-              publish_partial(action, target, batch_id, parent_msg_id, nil, other)
+                publish_partial(action, target, batch_id, parent_msg_id, nil, other)
+            end
           end
         end
       end
@@ -871,7 +909,9 @@ defmodule Prism.DiscordWorker do
 
   defp dead_message_cached?(webhook_id, message_id) do
     case redix_command(["EXISTS", "dead_msg:#{webhook_id}:#{message_id}"]) do
-      {:ok, 1} -> true
+      {:ok, 1} ->
+        true
+
       _ ->
         case redix_command(["EXISTS", "dead_msg:#{message_id}"]) do
           {:ok, 1} -> true
