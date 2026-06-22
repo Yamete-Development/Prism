@@ -66,9 +66,17 @@ defmodule Prism.RateLimit do
         Bucket.update_global(parsed.limit, 0, parsed.reset_at_ms)
         InvalidRequestTracker.record_invalid()
       else
-        Bucket.update(webhook_id, method_str, parsed.limit, 0, parsed.reset_at_ms)
-
-        if parsed.scope != "shared" do
+        # Only update the per-webhook bucket for non-shared scopes.
+        # Shared 429s mean the shared channel-level limit was hit by OTHER
+        # users, not us — updating our bucket with remaining=0 would
+        # incorrectly block all our other messages to this webhook.
+        if parsed.scope == "shared" do
+          # Don't update bucket or record invalid — shared 429s don't
+          # count against us per Discord docs. The individual request
+          # is still retried via spawn_retry with the retry_after delay.
+          :ok
+        else
+          Bucket.update(webhook_id, method_str, parsed.limit, 0, parsed.reset_at_ms)
           InvalidRequestTracker.record_invalid()
         end
       end

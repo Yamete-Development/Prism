@@ -147,7 +147,19 @@ defmodule Prism.RateLimit.Headers do
     is_global = is_global or global_header == "true" or scope == "global"
 
     limit = extract_int(headers, "x-ratelimit-limit") || 5
-    reset_at_ms = now_ms() + retry_after_ms
+
+    # Use x-ratelimit-reset-after header for bucket state when available.
+    # The body's retry_after (e.g. 300ms) is the minimum wait for THIS request,
+    # but x-ratelimit-reset-after (e.g. 2s) is when the actual rate limit window
+    # resets. Using the body value causes the pre-flight check to unlock too early.
+    reset_after_header = extract_float(headers, "x-ratelimit-reset-after")
+
+    reset_at_ms =
+      if reset_after_header do
+        now_ms() + trunc(reset_after_header * 1000)
+      else
+        now_ms() + retry_after_ms
+      end
 
     %{
       retry_after_ms: retry_after_ms,
