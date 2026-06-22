@@ -77,6 +77,14 @@ defmodule Prism.StreamTrimmer do
             Logger.warning("[StreamTrimmer] Failed to trim #{label}: #{inspect(reason)}")
         end
 
+      {:error, :empty_stream} ->
+        # The stream is empty, nothing to trim
+        :ok
+
+      {:error, %Redix.Error{message: "NOGROUP" <> _}} ->
+        # Consumer group hasn't been created yet
+        Logger.debug("[StreamTrimmer] Skipping trim for #{label}: Consumer group doesn't exist yet")
+
       {:error, reason} ->
         Logger.warning("[StreamTrimmer] Skipping trim for #{label}: #{inspect(reason)}")
     end

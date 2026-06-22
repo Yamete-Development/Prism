@@ -1,5 +1,17 @@
 import Config
 
+log_level =
+  case String.downcase(System.get_env("LOG_LEVEL") || "info") do
+    "debug" -> :debug
+    "info" -> :info
+    "warning" -> :warning
+    "warn" -> :warning
+    "error" -> :error
+    _ -> :info
+  end
+
+config :logger, level: log_level
+
 parse_bool = fn value ->
   String.trim(String.downcase(to_string(value || "true"))) in ["1", "true", "yes", "on"]
 end
