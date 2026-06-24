@@ -27,6 +27,8 @@ defmodule Prism.FanoutBroadway do
               hosts: Prism.EventBus.Config.kafka_brokers(),
               group_id: consumer_group,
               topics: [stream_key],
+              receive_interval: receive_interval,
+              fetch_config: [max_wait_time: 100],
               offset_reset_policy: :earliest
             ]
           },
