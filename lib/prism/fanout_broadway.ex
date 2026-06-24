@@ -27,7 +27,7 @@ defmodule Prism.FanoutBroadway do
               hosts: Prism.EventBus.Config.kafka_brokers(),
               group_id: consumer_group,
               topics: [stream_key],
-              offset_reset_policy: :reset_to_earliest
+              offset_reset_policy: :earliest
             ]
           }
         ]
