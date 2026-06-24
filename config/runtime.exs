@@ -136,8 +136,8 @@ if config_env() != :test do
       |> Enum.map(&String.trim/1)
       |> Enum.map(fn broker ->
         case String.split(broker, ":") do
-          [host, port] -> {String.to_charlist(host), String.to_integer(port)}
-          [host] -> {String.to_charlist(host), 9092}
+          [host, port] -> {host, String.to_integer(port)}
+          [host] -> {host, 9092}
         end
       end)
 
