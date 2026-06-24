@@ -46,15 +46,22 @@ defmodule Prism.DiscordWorker do
 
         if action == "delete", do: {:ok, nil}, else: {:error, :message_not_found}
       else
-        content =
-          if is_map(content) and action in ["execute", "edit"] do
-            Helpers.merge_overrides(content, target, action)
-          else
-            content
-          end
-
         headers = [{"Content-Type", "application/json"}]
-        body = if action == "delete", do: nil, else: Jason.encode_to_iodata!(content)
+        pre_encoded_body = Keyword.get(opts, :pre_encoded_body)
+
+        body =
+          if action == "delete" do
+            nil
+          else
+            overrides = Map.get(target, "overrides")
+
+            if is_map(content) and action in ["execute", "edit"] and is_map(overrides) and map_size(overrides) > 0 do
+              merged = Helpers.merge_overrides(content, target, action)
+              Jason.encode_to_iodata!(merged)
+            else
+              pre_encoded_body || Jason.encode_to_iodata!(content)
+            end
+          end
 
         checkpoint_key = Helpers.checkpoint_key(action, batch_id, webhook_id)
         method_str = Helpers.action_to_method_string(action)

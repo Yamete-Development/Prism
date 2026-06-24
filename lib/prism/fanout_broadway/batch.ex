@@ -130,6 +130,13 @@ defmodule Prism.FanoutBroadway.Batch do
         {targets, [], []}
       end
 
+    pre_encoded_body =
+      if action != "delete" and is_map(discord_payload) do
+        Jason.encode_to_iodata!(discord_payload)
+      else
+        nil
+      end
+
     OpenTelemetry.Tracer.with_span "prism.worker.process_batch" do
       OpenTelemetry.Tracer.set_attributes([
         {:batch_id, batch_id},
@@ -158,7 +165,8 @@ defmodule Prism.FanoutBroadway.Batch do
                 enqueued_at,
                 parent_message_id,
                 preflight: single_pf.preflight,
-                skip_checkpoint_write: true
+                skip_checkpoint_write: true,
+                pre_encoded_body: pre_encoded_body
               )
 
             [{:ok, result}]
@@ -174,7 +182,8 @@ defmodule Prism.FanoutBroadway.Batch do
                 batch_id,
                 polled_at,
                 enqueued_at,
-                parent_message_id
+                parent_message_id,
+                pre_encoded_body: pre_encoded_body
               )
 
             [{:ok, result}]
@@ -195,7 +204,8 @@ defmodule Prism.FanoutBroadway.Batch do
                     enqueued_at,
                     parent_message_id,
                     preflight: item.preflight,
-                    skip_checkpoint_write: true
+                    skip_checkpoint_write: true,
+                    pre_encoded_body: pre_encoded_body
                   )
                 else
                   Prism.DiscordWorker.process_target(
@@ -205,7 +215,8 @@ defmodule Prism.FanoutBroadway.Batch do
                     batch_id,
                     polled_at,
                     enqueued_at,
-                    parent_message_id
+                    parent_message_id,
+                    pre_encoded_body: pre_encoded_body
                   )
                 end
               end,
