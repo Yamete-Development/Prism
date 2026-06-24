@@ -1,7 +1,7 @@
 # Build stage
 FROM elixir:1.19.5-alpine AS builder
 
-RUN apk add --no-cache build-base git cmake
+RUN apk add --no-cache build-base git cmake bash
 
 WORKDIR /app
 
