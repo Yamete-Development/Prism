@@ -107,7 +107,29 @@ defmodule Prism.FanoutBroadway do
         payload = Prism.PrismStreamPayload.decode!(payload_binary)
 
         batch_id = payload.batch_id
-        targets = payload.targets
+        targets = Enum.map(payload.targets, fn t ->
+          # Parse overrides if present
+          overrides = 
+            if is_nil(t.overrides) or t.overrides == "" do
+              nil
+            else
+              case Jason.decode(t.overrides) do
+                {:ok, o} -> o
+                _ -> nil
+              end
+            end
+
+          %{
+            "channel_id" => t.channel_id,
+            "webhook_id" => t.webhook_id,
+            "webhook_token" => t.webhook_token,
+            "guild_id" => t.guild_id,
+            "hub_id" => t.hub_id,
+            "thread_id" => if(is_nil(t.thread_id) or t.thread_id == "", do: nil, else: t.thread_id),
+            "message_id" => if(is_nil(t.message_id) or t.message_id == "", do: nil, else: t.message_id),
+            "overrides" => overrides
+          }
+        end)
         action = if payload.action == "", do: "execute", else: payload.action
         
         # Payload is stored as a JSON string inside the protobuf for flexibility
