@@ -37,6 +37,14 @@ defmodule Prism.EventBus.DLQ do
     })
 
     case Transport.publish(dlq_stream, json, maxlen) do
+      :ok ->
+        Logger.warning(
+          "[EventBus.DLQ] Published event #{cloud_event["id"]} to #{dlq_stream} " <>
+            "(type=#{cloud_event["type"]}, attempts=#{attempts}, error=#{format_error(error)})"
+        )
+
+        :ok
+
       {:ok, _id} ->
         Logger.warning(
           "[EventBus.DLQ] Published event #{cloud_event["id"]} to #{dlq_stream} " <>

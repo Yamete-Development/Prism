@@ -32,6 +32,7 @@ defmodule Prism.EventBus.Publisher do
       })
 
       case Transport.publish(stream, json, maxlen) do
+        :ok -> :ok
         {:ok, _id} -> :ok
         {:error, reason} -> {:error, reason}
       end
@@ -61,6 +62,7 @@ defmodule Prism.EventBus.Publisher do
       })
 
       case Transport.publish(stream, json, maxlen) do
+        :ok -> :ok
         {:ok, _id} -> :ok
         {:error, reason} -> {:error, reason}
       end
