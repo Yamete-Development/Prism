@@ -11,7 +11,7 @@ defmodule Prism.EventBusTest do
 
     # Use a unique stream key per test to prevent cross-contamination
     test_id = System.unique_integer([:positive, :monotonic])
-    stream = "events:bus:test:#{test_id}"
+    stream = "events.bus:test:#{test_id}"
     dlq_stream = "#{stream}:dlq"
 
     # Clean up any leftover keys from previous runs

@@ -36,7 +36,7 @@ cp .env.example .env
 |---|---|---|
 | `REDIS_HOST` | Redis hostname | `localhost` |
 | `REDIS_PORT` | Redis port | `6379` |
-| `PRISM_STREAM_JOBS` | Jobs lane stream topic/key | `prism:stream:jobs` |
+| `PRISM_STREAM_JOBS` | Jobs lane stream topic/key | `prism.stream.jobs` |
 | `EVENT_BUS_TRANSPORT` | Transport backend | `redis` or `kafka` |
 | `KAFKA_BROKERS` | Comma-separated Kafka brokers | `localhost:9092` |
 | `PRISM_CONSUMER_GROUP` | Consumer group name | `prism:cg:fanout` |

@@ -351,7 +351,7 @@ defmodule Prism.FanoutBroadway.Batch do
 
       # After publishing callback, notify Beacon via event bus
       if action == "execute" and root_hub_id do
-        Prism.EventBus.publish("events:bus",
+        Prism.EventBus.publish("events.bus",
           type: Prism.EventBus.Config.broadcast_event_type(),
           data: %{
             batch_id: batch_id,

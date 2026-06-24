@@ -9,10 +9,10 @@ defmodule Prism.EventBus do
   ## Usage
 
       # Publish an event
-      EventBus.publish("events:bus", type: "fun.interchat.broadcast.completed", data: %{...})
+      EventBus.publish("events.bus", type: "fun.interchat.broadcast.completed", data: %{...})
 
       # Subscribe to events
-      {:ok, pid} = EventBus.subscribe("events:bus", "my-consumer", &MyHandler.handle/2)
+      {:ok, pid} = EventBus.subscribe("events.bus", "my-consumer", &MyHandler.handle/2)
 
   ## Adapter API Contract
 
@@ -48,7 +48,7 @@ defmodule Prism.EventBus do
 
   ## Examples
 
-      EventBus.publish("events:bus",
+      EventBus.publish("events.bus",
         type: "fun.interchat.broadcast.completed",
         data: %{batch_id: "b_123", ok_count: 5, fail_count: 0}
       )
@@ -111,7 +111,7 @@ defmodule Prism.EventBus do
   ## Examples
 
       EventBus.subscribe(
-        stream: "events:bus",
+        stream: "events.bus",
         consumer_group: "beacon-hub-fanout",
         handler: &HubFanout.handle_event/2,
         handler_opts: %{pubsub: MyApp.PubSub}

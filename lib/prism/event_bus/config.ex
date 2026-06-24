@@ -4,11 +4,11 @@ defmodule Prism.EventBus.Config do
   """
 
   @doc "Shared event stream key"
-  def events_stream, do: Application.get_env(:prism, :events_stream, "events:bus")
+  def events_stream, do: Application.get_env(:prism, :events_stream, "events.bus")
 
   @doc "Dead-letter queue stream key"
   def events_dlq_stream,
-    do: Application.get_env(:prism, :events_dlq_stream, "events:bus:dlq")
+    do: Application.get_env(:prism, :events_dlq_stream, "events.bus.dlq")
 
   @doc "Stream MAXLEN cap (~ approximate)"
   def events_stream_maxlen,

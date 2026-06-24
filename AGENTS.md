@@ -72,7 +72,7 @@ Key config categories:
 
 Prism runs Broadway pipelines to consume batches concurrently:
 
-1. **Jobs Lane (default `prism:stream:jobs`):** The unified fanout stream fed by the main bot (consumed via Redis Streams or Kafka).
+1. **Jobs Lane (default `prism.stream.jobs`):** The unified fanout stream fed by the main bot (consumed via Redis Streams or Kafka).
 2. **Retry Lane (default `discord:fanout:stream:retries`):** Dedicated stream fed by the delayed scheduler for failed webhooks. (Always uses Redis Streams, as it's an internal delayed queue implementation.)
 
 All lane parameters (concurrency, receive intervals) are configurable via `Prism.Config`.

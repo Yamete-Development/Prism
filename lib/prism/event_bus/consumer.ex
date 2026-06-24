@@ -7,14 +7,14 @@ defmodule Prism.EventBus.Consumer do
   ## Starting
 
       {:ok, pid} = EventBus.Consumer.start_link(
-        stream: "events:bus",
+        stream: "events.bus",
         consumer_group: "my-consumer-group",
         handler: &MyHandler.handle/1
       )
 
   Or via the convenience function:
 
-      {:ok, pid} = EventBus.subscribe("events:bus", "my-group", &MyHandler.handle/1)
+      {:ok, pid} = EventBus.subscribe("events.bus", "my-group", &MyHandler.handle/1)
   """
 
   use GenServer

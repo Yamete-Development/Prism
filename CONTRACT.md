@@ -4,7 +4,7 @@ Prism acts as a consumer of Redis Streams to process webhook dispatch requests, 
 
 ## Enqueueing Work (Input Stream)
 
-To dispatch messages, push JSON payloads to your configured EventBus stream (default topic/key: `prism:stream:jobs`).
+To dispatch messages, push JSON payloads to your configured EventBus stream (default topic/key: `prism.stream.jobs`).
 
 ### Payload Schema
 
@@ -142,8 +142,8 @@ All stream keys and Redis identifiers are configurable. See `.env.example` for t
 
 | Config Key | Env Var | Default |
 |---|---|---|
-| Jobs lane stream | `PRISM_STREAM_JOBS` | `prism:stream:jobs` |
-| Retry stream | `REDIS_RETRY_STREAM` | `prism:stream:retries` |
+| Jobs lane stream | `PRISM_STREAM_JOBS` | `prism.stream.jobs` |
+| Retry stream | `REDIS_RETRY_STREAM` | `prism.stream.retries` |
 | Callback stream | `REDIS_CALLBACK_STREAM` | `prism:stream:callbacks` |
 | Consumer group | `REDIS_GROUP` | `prism:cg:fanout` |
 | Delayed queue ZSET | `PRISM_DELAYED_ZSET_KEY` | `prism:delayed` |
@@ -153,7 +153,7 @@ All stream keys and Redis identifiers are configurable. See `.env.example` for t
 
 ## Event Bus Output (CloudEvents v1.0)
 
-Prism publishes events to the shared Redis Streams event bus for inter-service communication. The primary stream is `events:bus` with a dead-letter queue at `events:bus:dlq`. All stream keys are configurable — see `.env.example`.
+Prism publishes events to the shared Redis Streams event bus for inter-service communication. The primary stream is `events.bus` with a dead-letter queue at `events.bus.dlq`. All stream keys are configurable — see `.env.example`.
 
 ### CloudEvent Envelope Schema
 
@@ -195,7 +195,7 @@ Every event is wrapped in a CloudEvents v1.0 envelope:
 
 ### Event Bus DLQ
 
-Failed events that exhaust all retry attempts are written to `events:bus:dlq` (configurable via `EVENTS_DLQ_STREAM`):
+Failed events that exhaust all retry attempts are written to `events.bus.dlq` (configurable via `EVENTS_DLQ_STREAM`):
 
 ```json
 {
@@ -217,7 +217,7 @@ Failed events that exhaust all retry attempts are written to `events:bus:dlq` (c
 
 ### Consumer Group Model
 
-Each service creates its own consumer groups on the shared `events:bus` stream. Consumer groups follow the pattern `<service>-cg:<purpose>`:
+Each service creates its own consumer groups on the shared `events.bus` stream. Consumer groups follow the pattern `<service>-cg:<purpose>`:
 
 | Service | Consumer Group Pattern | Purpose |
 |---|---|---|

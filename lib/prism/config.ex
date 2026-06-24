@@ -18,13 +18,13 @@ defmodule Prism.Config do
 
   @doc "Jobs lane stream key"
   def stream_jobs,
-    do: Application.get_env(:prism, :stream_jobs, "prism:stream:jobs")
+    do: Application.get_env(:prism, :stream_jobs, "prism.stream.jobs")
 
 
 
   @doc "Retry stream key"
   def stream_retries,
-    do: Application.get_env(:prism, :redis_retry_stream, "prism:stream:retries")
+    do: Application.get_env(:prism, :redis_retry_stream, "prism.stream.retries")
 
   @doc "Consumer group name"
   def consumer_group, do: Application.get_env(:prism, :consumer_group, "prism:cg:fanout")
