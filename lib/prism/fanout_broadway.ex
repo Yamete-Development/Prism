@@ -29,7 +29,8 @@ defmodule Prism.FanoutBroadway do
               topics: [stream_key],
               offset_reset_policy: :earliest
             ]
-          }
+          },
+          concurrency: 5
         ]
       else
         [
