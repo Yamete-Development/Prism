@@ -4,10 +4,45 @@ Prism acts as a consumer of Redis Streams to process webhook dispatch requests, 
 
 ## Enqueueing Work (Input Stream)
 
-To dispatch messages, push JSON payloads to your configured EventBus stream (default topic/key: `prism.stream.jobs`).
+To dispatch messages, push Protobuf payloads (`PrismStreamPayload`) to your configured EventBus stream (default topic/key: `prism.stream.jobs`).
 
-### Payload Schema
+### Payload Schema (Protobuf + JSON)
 
+The outer envelope is a Protobuf message for performance, but the inner `payload` remains a stringified JSON object containing the standard Discord fields.
+
+```protobuf
+message PrismStreamMetadata {
+  string author_id = 1;
+  string guild_id = 2;
+  string guild_name = 3;
+  repeated string badges = 4;
+}
+
+message PrismTarget {
+  string channel_id = 1;
+  string webhook_id = 2;
+  string webhook_token = 3;
+  optional string guild_id = 4;
+  optional string hub_id = 5;
+  optional string thread_id = 6;
+  optional string message_id = 7;
+  optional string overrides = 8; // JSON string
+}
+
+message PrismStreamPayload {
+  string batch_id = 1;
+  string action = 2;
+  string payload = 3; // JSON string of Discord payload
+  repeated PrismTarget targets = 4;
+  optional string message_id = 5;
+  optional int32 shard_index = 6;
+  optional string hub_id = 7;
+  optional string hub_name = 8;
+  optional PrismStreamMetadata metadata = 9;
+}
+```
+
+Example of the inner JSON `payload` string:
 ```json
 {
   "batch_id": "string (unique identifier for this batch)",
@@ -90,7 +125,7 @@ Short keys that appear at multiple nesting levels (e.g. `m` for `message_id` at 
 
 ## Callbacks (Output Stream)
 
-Once a batch is fully processed (or hits maximum retries), Prism writes a callback event to the configured callback stream (default: `prism:stream:callbacks`).
+Once a batch is fully processed (or hits maximum retries), Prism writes a CloudEvent callback to the centralized EventBus stream (configurable via `EVENTS_STREAM`, default: `events:bus`).
 
 ### Callback Schema
 
@@ -144,8 +179,8 @@ All stream keys and Redis identifiers are configurable. See `.env.example` for t
 |---|---|---|
 | Jobs lane stream | `PRISM_STREAM_JOBS` | `prism.stream.jobs` |
 | Retry stream | `REDIS_RETRY_STREAM` | `prism.stream.retries` |
-| Callback stream | `REDIS_CALLBACK_STREAM` | `prism:stream:callbacks` |
-| Consumer group | `REDIS_GROUP` | `prism:cg:fanout` |
+| EventBus stream (Callbacks) | `EVENTS_STREAM` | `events:bus` |
+| Consumer group | `PRISM_CONSUMER_GROUP` | `prism:cg:fanout` |
 | Delayed queue ZSET | `PRISM_DELAYED_ZSET_KEY` | `prism:delayed` |
 | PubSub wakeup channel | `PRISM_PUBSUB_CHANNEL` | `prism:wakeup` |
 

@@ -2,7 +2,7 @@
 
 Prism is a high-performance, asynchronous worker pool written in Elixir. It acts as a fast pipe for routing webhook requests to Discord at scale.
 
-Instead of managing HTTP request loops, retries, and rate limits within your main application, you enqueue standard JSON payloads (CloudEvents) to an EventBus (Redis Streams or Kafka). Prism pulls these batches, fans them out concurrently, handles all Discord HTTP `429 Too Many Requests` backpressure automatically, and publishes a summary callback via EventBus when the batch is finished.
+Instead of managing HTTP request loops, retries, and rate limits within your main application, you enqueue Protobuf payloads to an EventBus (Redis Streams or Kafka). Prism pulls these batches, fans them out concurrently, handles all Discord HTTP `429 Too Many Requests` backpressure automatically, and publishes a JSON summary callback (CloudEvent) via EventBus when the batch is finished.
 
 Prism is entirely payload-agnostic. It does not enforce any specific Discord formatting rules, making it a general-purpose tool for any Discord bot or application that needs to broadcast messages to hundreds or thousands of webhooks quickly.
 
