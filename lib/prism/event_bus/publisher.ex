@@ -39,6 +39,24 @@ defmodule Prism.EventBus.Publisher do
     end
   end
 
+  @spec publish_raw(binary(), binary(), keyword()) :: :ok | {:error, term()}
+  def publish_raw(stream, data_bytes, opts \\ []) do
+    maxlen = Keyword.get(opts, :maxlen, Prism.EventBus.Config.events_stream_maxlen())
+
+    OpenTelemetry.Tracer.with_span "eventbus.publish_raw" do
+      OpenTelemetry.Tracer.set_attributes([
+        {:messaging_system, String.to_atom(Transport.system_name())},
+        {:messaging_destination, stream}
+      ])
+
+      case Transport.publish(stream, data_bytes, maxlen) do
+        :ok -> :ok
+        {:ok, _id} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
   @spec publish_cloud_event(binary(), map(), keyword()) :: :ok | {:error, term()}
   def publish_cloud_event(stream, cloud_event, opts \\ []) do
     maxlen = Keyword.get(opts, :maxlen, Prism.EventBus.Config.events_stream_maxlen())

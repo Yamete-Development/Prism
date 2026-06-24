@@ -71,7 +71,7 @@ defmodule Prism.RetryBroadway do
 
       case Jason.decode(payload_json) do
         {:ok, payload} ->
-          if Map.has_key?(payload, "targets") do
+          if Map.has_key?(payload, "targets") or Map.get(payload, "type") == "protobuf_batch" do
             route_batch_to_fanout(payload, payload_json)
           else
             Prism.DiscordWorker.process_retry(payload, polled_at, enqueued_at)
@@ -87,24 +87,36 @@ defmodule Prism.RetryBroadway do
   end
 
   defp route_batch_to_fanout(payload, _payload_json) do
-    targets = Map.get(payload, "targets", [])
-    target_count = length(targets)
-    batch_id = Map.get(payload, "batch_id", "unknown")
+    if Map.get(payload, "type") == "protobuf_batch" do
+      stream_key = Prism.Config.stream_jobs()
+      Logger.info("[RetryBroadway] Routing protobuf batch back to jobs stream #{stream_key}")
 
-    stream_key = Prism.Config.stream_jobs()
+      bytes = Base.decode64!(Map.fetch!(payload, "bytes"))
+      case Prism.EventBus.Publisher.publish_raw(stream_key, bytes) do
+        :ok -> :ok
+        {:error, reason} ->
+          Logger.error("[RetryBroadway] Failed to publish protobuf batch to #{stream_key}: #{inspect(reason)}")
+      end
+    else
+      targets = Map.get(payload, "targets", [])
+      target_count = length(targets)
+      batch_id = Map.get(payload, "batch_id", "unknown")
 
-    Logger.info(
-      "[RetryBroadway] Routing batch #{batch_id} (#{target_count} targets) back to jobs stream #{stream_key}"
-    )
+      stream_key = Prism.Config.stream_jobs()
 
-    case Prism.EventBus.Publisher.publish(stream_key, payload, type: "prism.job.fanout") do
-      :ok ->
-        :ok
+      Logger.info(
+        "[RetryBroadway] Routing batch #{batch_id} (#{target_count} targets) back to jobs stream #{stream_key}"
+      )
 
-      {:error, reason} ->
-        Logger.error(
-          "[RetryBroadway] Failed to publish batch #{batch_id} to #{stream_key}: #{inspect(reason)}"
-        )
+      case Prism.EventBus.Publisher.publish(stream_key, payload, type: "prism.job.fanout") do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.error(
+            "[RetryBroadway] Failed to publish batch #{batch_id} to #{stream_key}: #{inspect(reason)}"
+          )
+      end
     end
   end
 end

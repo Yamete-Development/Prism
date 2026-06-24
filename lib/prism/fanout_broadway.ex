@@ -85,52 +85,67 @@ defmodule Prism.FanoutBroadway do
   def handle_message(_, %Message{data: data} = message, _) do
     if Prism.Config.backpressure_enabled?() and Prism.RateLimit.unhealthy?() do
       delay_ms = Prism.RateLimit.backoff_ms()
-      {payload_json, _} = extract_payload_and_time(data)
+      {payload_binary, _} = extract_payload_and_time(data)
 
-      with {:ok, ce} <- Jason.decode(payload_json) do
-        raw = Map.get(ce, "data", %{})
-        payload = Prism.FanoutBroadway.KeyExpansion.expand_keys(raw)
-        Helpers.re_enqueue_on_backpressure(payload, "", delay_ms)
+      try do
+        # Wrap the protobuf binary in a map so DelayedQueue can encode it as JSON
+        payload_map = %{
+          "type" => "protobuf_batch",
+          "bytes" => Base.encode64(payload_binary)
+        }
+        Helpers.re_enqueue_on_backpressure(payload_map, "", delay_ms)
+      rescue
+        _ -> :ok
       end
 
       message
     else
       polled_at = :os.system_time(:millisecond)
-      {payload_json, enqueued_at} = extract_payload_and_time(data)
+      {payload_binary, enqueued_at} = extract_payload_and_time(data)
 
-      case Jason.decode(payload_json) do
-        {:ok, ce} ->
-          raw = Map.get(ce, "data", %{})
-          payload = Prism.FanoutBroadway.KeyExpansion.expand_keys(raw)
+      try do
+        payload = Prism.PrismStreamPayload.decode!(payload_binary)
 
-          %{"batch_id" => batch_id, "targets" => targets} = payload
-          action = Map.get(payload, "action", "execute")
-          discord_payload = Map.get(payload, "payload", %{})
-          parent_message_id = Map.get(payload, "message_id")
-          metadata = Map.get(payload, "metadata", %{})
-          hub_id = Map.get(payload, "hub_id")
+        batch_id = payload.batch_id
+        targets = payload.targets
+        action = if payload.action == "", do: "execute", else: payload.action
+        
+        # Payload is stored as a JSON string inside the protobuf for flexibility
+        discord_payload = case Jason.decode(payload.payload) do
+          {:ok, p} -> p
+          _ -> %{}
+        end
+        
+        parent_message_id = payload.message_id
+        metadata = if payload.metadata do
+          %{
+            "author_id" => payload.metadata.author_id,
+            "guild_id" => payload.metadata.guild_id,
+            "guild_name" => payload.metadata.guild_name,
+            "badges" => payload.metadata.badges
+          }
+        else
+          %{}
+        end
+        hub_id = payload.hub_id
 
-          if parent_message_id && Prism.CancelChecker.cancelled?(parent_message_id) do
-            Logger.info(
-              "FanoutBroadway: skipping cancelled batch batch_id=#{batch_id} message_id=#{parent_message_id}"
-            )
+        if parent_message_id != nil and parent_message_id != "" and Prism.CancelChecker.cancelled?(parent_message_id) do
+          Logger.info(
+            "FanoutBroadway: skipping cancelled batch batch_id=#{batch_id} message_id=#{parent_message_id}"
+          )
 
-            message
-          else
-            shard_index = Map.get(payload, "shard_index", 0)
-            trace_headers = Map.get(payload, "trace_headers", %{}) |> Enum.to_list()
+          message
+        else
+          shard_index = payload.shard_index || 0
+          
+          OpenTelemetry.Tracer.set_attributes([
+            {:batch_id, batch_id},
+            {:action, action},
+            {:target_count, length(targets)},
+            {:shard_index, shard_index}
+          ])
 
-            ctx = :otel_propagator_text_map.extract(trace_headers)
-            OpenTelemetry.Ctx.attach(ctx)
-
-            OpenTelemetry.Tracer.set_attributes([
-              {:batch_id, batch_id},
-              {:action, action},
-              {:target_count, length(targets)},
-              {:shard_index, shard_index}
-            ])
-
-            if action == "execute" and Helpers.empty_discord_payload?(discord_payload) do
+          if action == "execute" and Helpers.empty_discord_payload?(discord_payload) do
               Logger.warning(
                 "FanoutBroadway: skipping empty execute batch batch_id=#{batch_id} — no content, embeds, or components"
               )
@@ -156,16 +171,19 @@ defmodule Prism.FanoutBroadway do
                   "Async batch cap reached (#{current}/#{max_async}). " <>
                     "Re-enqueueing batch #{batch_id} to delayed queue (200ms)."
                 )
-
-                Prism.DelayedQueue.enqueue(payload, 200)
+                payload_map = %{
+                  "type" => "protobuf_batch",
+                  "bytes" => Base.encode64(payload_binary)
+                }
+                Prism.DelayedQueue.enqueue(payload_map, 200)
               end
             end
 
             message
           end
-
-        _ ->
-          Logger.error("Failed to parse or invalid payload: #{inspect(payload_json)}")
+      rescue
+        e ->
+          Logger.error("Failed to parse protobuf payload: #{inspect(e)}")
           Message.failed(message, "invalid payload")
       end
     end

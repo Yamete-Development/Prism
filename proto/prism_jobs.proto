@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package prism;
+
+message PrismTarget {
+  string channel_id = 1;
+  string webhook_id = 2;
+  string webhook_token = 3;
+  optional string guild_id = 4;
+  optional string hub_id = 5;
+  optional string thread_id = 6;
+  optional string message_id = 7;
+  optional string overrides = 8; // JSON encoded overrides
+}
+
+message PrismStreamMetadata {
+  string author_id = 1;
+  string guild_id = 2;
+  string guild_name = 3;
+  repeated string badges = 4;
+}
+
+message PrismStreamPayload {
+  string batch_id = 1;
+  string action = 2;
+  optional string message_id = 3;
+  optional int32 shard_index = 4;
+  optional string hub_id = 5;
+  optional string hub_name = 6;
+  string payload = 7; // JSON encoded payload
+  repeated PrismTarget targets = 8;
+  optional PrismStreamMetadata metadata = 9;
+}

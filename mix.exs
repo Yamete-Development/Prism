@@ -35,7 +35,8 @@ defmodule Prism.MixProject do
       {:bandit, "~> 1.5", only: :test},
       {:plug, "~> 1.6", only: :test},
       {:brod, "~> 4.0"},
-      {:broadway_kafka, "~> 0.4.4"}
+      {:broadway_kafka, "~> 0.4.4"},
+      {:protox, "~> 1.7"}
     ]
   end
 
