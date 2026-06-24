@@ -54,6 +54,20 @@ defmodule Prism.Application do
       {cluster_name, [strategy: Cluster.Strategy.LocalEpmd]}
     ]
 
+    transport_backend = Prism.EventBus.Config.transport_backend()
+
+    kafka_client_child =
+      if transport_backend == Prism.EventBus.Transport.Kafka do
+        [
+          %{
+            id: :kafka_client,
+            start: {:brod, :start_link_client, [Prism.EventBus.Config.kafka_brokers(), :kafka_client, []]}
+          }
+        ]
+      else
+        []
+      end
+
     children =
       if Node.alive?() do
         [{Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]}]
@@ -64,6 +78,7 @@ defmodule Prism.Application do
 
         []
       end ++
+        kafka_client_child ++
         [
           {Finch,
            name: DiscordFinch,

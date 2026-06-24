@@ -3,6 +3,9 @@ defmodule Prism.EventBus.Transport.Kafka do
 
   @impl true
   def publish(stream, payload, _maxlen) do
+    # Ensure a producer is started for this topic (idempotent; ignores {:error, {:already_started, _}})
+    _ = :brod.start_producer(:kafka_client, stream, [])
+
     case :brod.produce_sync(:kafka_client, stream, 0, "", payload) do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
