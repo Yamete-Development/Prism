@@ -2,7 +2,7 @@
 
 Prism is a high-performance, asynchronous worker pool written in Elixir. It acts as a fast pipe for routing webhook requests to Discord at scale.
 
-Instead of managing HTTP request loops, retries, and rate limits within your main application, you enqueue standard JSON payloads to a Redis Stream. Prism pulls these batches, fans them out concurrently, handles all Discord HTTP `429 Too Many Requests` backpressure automatically, and publishes a summary callback via Redis when the batch is finished.
+Instead of managing HTTP request loops, retries, and rate limits within your main application, you enqueue standard JSON payloads (CloudEvents) to an EventBus (Redis Streams or Kafka). Prism pulls these batches, fans them out concurrently, handles all Discord HTTP `429 Too Many Requests` backpressure automatically, and publishes a summary callback via EventBus when the batch is finished.
 
 Prism is entirely payload-agnostic. It does not enforce any specific Discord formatting rules, making it a general-purpose tool for any Discord bot or application that needs to broadcast messages to hundreds or thousands of webhooks quickly.
 
@@ -20,7 +20,7 @@ This worker uses **Broadway** to process Redis Stream messages concurrently, wit
 
 ## Integration Contract
 
-Prism communicates purely over Redis Streams using JSON payloads. For the complete schema detailing how to enqueue tasks and consume callbacks, see [CONTRACT.md](CONTRACT.md).
+Prism communicates purely over EventBus using JSON payloads wrapped in CloudEvents. For the complete schema detailing how to enqueue tasks and consume callbacks, see [CONTRACT.md](CONTRACT.md).
 
 ## Configuration
 
@@ -36,10 +36,10 @@ cp .env.example .env
 |---|---|---|
 | `REDIS_HOST` | Redis hostname | `localhost` |
 | `REDIS_PORT` | Redis port | `6379` |
-| `REDIS_STREAM_FAST` | Fast lane stream key | `discord:fanout:stream:fast` |
-| `REDIS_STREAM_SLOW` | Slow lane stream key | `discord:fanout:stream:slow` |
-| `REDIS_CALLBACK_STREAM` | Callback stream key | `discord:fanout:callbacks` |
-| `REDIS_GROUP` | Consumer group name | `elixir_fanout_pool` |
+| `PRISM_STREAM_JOBS` | Jobs lane stream topic/key | `prism:stream:jobs` |
+| `EVENT_BUS_TRANSPORT` | Transport backend | `redis` or `kafka` |
+| `KAFKA_BROKERS` | Comma-separated Kafka brokers | `localhost:9092` |
+| `PRISM_CONSUMER_GROUP` | Consumer group name | `prism:cg:fanout` |
 
 ### Performance Tuning
 
@@ -50,7 +50,6 @@ cp .env.example .env
 | `PRISM_BROADWAY_CONCURRENCY` | Max concurrent batches per fanout lane | `50` |
 | `PRISM_BATCH_MAX_CONCURRENCY` | Max concurrent HTTP requests per batch | `80` |
 | `PRISM_RETRY_BROADWAY_CONCURRENCY` | Max concurrent batches for retry lane | `10` |
-| `PRISM_SLOW_LANE_THRESHOLD` | Route batches with > N targets to slow lane | `80` |
 | `PRISM_MAX_ASYNC_BATCHES` | Max in-flight async batches before re-enqueue | `300` |
 
 See `.env.example` for the complete list of all configurable variables including retry parameters, rate limit thresholds, feature gates, timeouts, and cluster settings.
@@ -100,11 +99,11 @@ lib/
 │   │   ├── retry.ex                          # Retry spawning & delayed queue enqueue
 │   │   ├── callbacks.ex                      # Partial callback publishing
 │   │   └── dead_message.ex                   # Dead message cache
-│   ├── fanout_broadway.ex                    # Broadway pipeline (Fast/Slow lanes)
+│   ├── fanout_broadway.ex                    # Broadway pipeline (Jobs lane)
 │   ├── fanout_broadway/
 │   │   ├── key_expansion.ex                  # Short→long JSON key mapping
 │   │   ├── batch.ex                          # Batch fan-out & result aggregation
-│   │   └── sse.ex                            # SSE/Dashboard PubSub publishing
+
 │   ├── rate_limit.ex                         # Public facade for rate-limit operations
 │   ├── rate_limit/
 │   │   ├── backpressure.ex                   # Cloudflare IP-level block tracking

@@ -4,7 +4,7 @@ Prism acts as a consumer of Redis Streams to process webhook dispatch requests, 
 
 ## Enqueueing Work (Input Stream)
 
-To dispatch messages, push JSON payloads to your configured Redis stream (default: `prism:stream:fast`).
+To dispatch messages, push JSON payloads to your configured EventBus stream (default topic/key: `prism:stream:jobs`).
 
 ### Payload Schema
 
@@ -142,10 +142,99 @@ All stream keys and Redis identifiers are configurable. See `.env.example` for t
 
 | Config Key | Env Var | Default |
 |---|---|---|
-| Fast lane stream | `REDIS_STREAM_FAST` | `prism:stream:fast` |
-| Slow lane stream | `REDIS_STREAM_SLOW` | `prism:stream:slow` |
+| Jobs lane stream | `PRISM_STREAM_JOBS` | `prism:stream:jobs` |
 | Retry stream | `REDIS_RETRY_STREAM` | `prism:stream:retries` |
 | Callback stream | `REDIS_CALLBACK_STREAM` | `prism:stream:callbacks` |
 | Consumer group | `REDIS_GROUP` | `prism:cg:fanout` |
 | Delayed queue ZSET | `PRISM_DELAYED_ZSET_KEY` | `prism:delayed` |
 | PubSub wakeup channel | `PRISM_PUBSUB_CHANNEL` | `prism:wakeup` |
+
+---
+
+## Event Bus Output (CloudEvents v1.0)
+
+Prism publishes events to the shared Redis Streams event bus for inter-service communication. The primary stream is `events:bus` with a dead-letter queue at `events:bus:dlq`. All stream keys are configurable — see `.env.example`.
+
+### CloudEvent Envelope Schema
+
+Every event is wrapped in a CloudEvents v1.0 envelope:
+
+```json
+{
+  "specversion": "1.0",
+  "type": "fun.interchat.broadcast.completed",
+  "source": "/prism",
+  "id": "evt_<hex>",
+  "time": "2026-06-24T09:30:00Z",
+  "datacontenttype": "application/json",
+  "data": { ... },
+  "traceparent": "00-<trace_id>-<span_id>-01",
+  "tracestate": null
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `specversion` | string | Always `"1.0"` |
+| `type` | string | Reverse-DNS event type, e.g. `fun.interchat.broadcast.completed` |
+| `source` | string | URI identifying the producing service, e.g. `"/prism"` |
+| `id` | string | Unique event ID prefixed with `evt_` |
+| `time` | string | RFC 3339 timestamp |
+| `datacontenttype` | string | Always `"application/json"` |
+| `data` | object | Event-specific payload |
+| `traceparent` | string | W3C trace context propagation header |
+| `tracestate` | string | W3C tracestate header (omitted when null) |
+
+### Event Type Catalog
+
+| Event Type | Source | Data Schema | Consumers |
+|---|---|---|---|
+| `fun.interchat.broadcast.completed` | `/prism` | `batch_id`, `action`, `ok_count`, `fail_count`, `parent_message_id`, `hub_id`, `timestamp` | Beacon (hub fanout) |
+
+*Note: Prism is primarily an event producer. Event types consumed by Beacon and Bot are documented in their respective CONTRACT files.*
+
+### Event Bus DLQ
+
+Failed events that exhaust all retry attempts are written to `events:bus:dlq` (configurable via `EVENTS_DLQ_STREAM`):
+
+```json
+{
+  "original_event": { ... },
+  "error": "descriptive error message",
+  "failed_at": "2026-06-24T09:30:00Z",
+  "attempts": 3,
+  "consumer_group": "prism-cg:..."
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `original_event` | object | The full CloudEvent that failed |
+| `error` | string | Error message or exception |
+| `failed_at` | string | ISO 8601 timestamp of final failure |
+| `attempts` | integer | Number of delivery attempts made |
+| `consumer_group` | string | Consumer group that exhausted retries |
+
+### Consumer Group Model
+
+Each service creates its own consumer groups on the shared `events:bus` stream. Consumer groups follow the pattern `<service>-cg:<purpose>`:
+
+| Service | Consumer Group Pattern | Purpose |
+|---|---|---|
+| Beacon | `beacon-cg:hub-fanout` | Hub message dispatch |
+| Bot | `bot-cg:cache-invalidator` | Cross-shard cache invalidation |
+
+Per-shard consumer names (`<service>-<shard_index>`) ensure at-least-once delivery and enable stale message recovery via XAUTOCLAIM.
+
+### Transport Abstraction
+
+The EventBus adapter supports pluggable transport backends behind a unified contract:
+
+| Language | Contract Type | Implementation |
+|---|---|---|
+| Elixir | `@behaviour` (`Prism.EventBus.Transport.Behaviour`) | `Prism.EventBus.Transport.Redis` |
+| Python | `Protocol` (`EventBusTransport`) | `RedisStreamTransport` |
+| Go | `interface` (`Publisher`) | `RedisPublisher` |
+| Rust | `trait` (`EventBus`) | `RedisEventBus` |
+
+Each transport backend must implement: publish, create consumer group, read batch, acknowledge, claim stale, and system name. Set `EVENT_BUS_TRANSPORT` to swap backends (e.g., `redis` or `kafka`).

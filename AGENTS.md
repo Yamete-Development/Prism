@@ -6,7 +6,7 @@ This document is the specialized guide for agents working on the Elixir-based we
 
 ## Service Architecture
 
-Prism is an OTP application built in Elixir that consumes payload batches from Redis Streams and dispatches them concurrently via Finch HTTP clients to Discord's webhooks.
+Prism is an OTP application built in Elixir that consumes payload batches from an EventBus (Redis Streams or Kafka) and dispatches them concurrently via Finch HTTP clients to Discord's webhooks.
 
 ```
 Prism/
@@ -20,7 +20,7 @@ Prism/
 │   │   ├── fanout_broadway/          # Fanout pipeline (split into sub-modules)
 │   │   │   ├── batch.ex              # Batch fan-out, result aggregation, reply index
 │   │   │   ├── key_expansion.ex      # Short→long JSON key mapping
-│   │   │   └── sse.ex                # SSE/Dashboard PubSub publishing
+
 │   │   ├── rate_limit/               # Rate limit tracking & Cloudflare backpressure
 │   │   │   ├── backpressure.ex       # IP-level Cloudflare block tracking
 │   │   │   ├── bucket.ex             # Redis-backed token bucket
@@ -56,26 +56,26 @@ Prism/
 All runtime configuration is centralized in `lib/prism/config.ex`. Every configurable value has a getter function that reads from `Application.get_env/3` with sensible defaults. See `.env.example` for the full list of environment variables.
 
 Key config categories:
-- **Redis / Streams**: pool size, stream keys, consumer group, delayed queue keys
+- **EventBus**: transport backend (`Redis` or `Kafka`), stream topics, Kafka brokers
+- **Redis / Streams**: pool size, consumer group, delayed queue keys, retry stream keys
 - **HTTP / Finch**: pool count, timeouts, keepalive
 - **Rate limiting**: backpressure thresholds, invalid request tracker windows, bucket TTLs
 - **Retry parameters**: base delays, max attempts per error type, checkpoints
 - **Feature gates**: dead message cache, key expansion, cancel checker, stream trimmer
-- **Broadway tuning**: concurrency, receive intervals, lane thresholds, task timeouts
-- **SSE / Dashboard**: PubSub topic prefix, enable/disable
+- **Broadway tuning**: concurrency, receive intervals, task timeouts
+
 - **Cluster**: topology name
 
 ---
 
 ## Consumer Lanes (`Prism.FanoutBroadway`)
 
-Prism runs Broadway pipelines to consume batches from Redis Streams concurrently:
+Prism runs Broadway pipelines to consume batches concurrently:
 
-1. **Fast Lane (default `discord:fanout:stream:fast`):** Generally used for smaller batches.
-2. **Slow Lane (default `discord:fanout:stream:slow`):** Reserved for larger message fanouts (batches exceeding the `slow_lane_threshold`, default 80 targets).
-3. **Retry Lane (default `discord:fanout:stream:retries`):** Dedicated stream fed by the delayed scheduler for failed webhooks.
+1. **Jobs Lane (default `prism:stream:jobs`):** The unified fanout stream fed by the main bot (consumed via Redis Streams or Kafka).
+2. **Retry Lane (default `discord:fanout:stream:retries`):** Dedicated stream fed by the delayed scheduler for failed webhooks. (Always uses Redis Streams, as it's an internal delayed queue implementation.)
 
-All lane parameters (concurrency, receive intervals, thresholds) are configurable via `Prism.Config`.
+All lane parameters (concurrency, receive intervals) are configurable via `Prism.Config`.
 
 ---
 
@@ -189,6 +189,3 @@ Shared utilities consumed across the codebase:
 - `spawn_async_batch/10` — `Task.Supervisor` async spawning with crash recovery
 - `store_reply_index/2` — Redis reply index storage
 
-### `Prism.FanoutBroadway.SSE`
-- `publish_sse_event/7` — Extract metadata, build SSE payload, publish to Redis PubSub
-- Gated by `Prism.Config.sse_enabled?/0`

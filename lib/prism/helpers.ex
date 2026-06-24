@@ -169,23 +169,14 @@ defmodule Prism.Helpers do
   # ── Callback publishing ─────────────────────────────────────────────────
 
   @doc """
-  Publishes a JSON-encoded callback payload to the callback stream with MAXLEN trimming.
+  Publishes a callback payload as a CloudEvent to the callback stream via EventBus.
   """
-  @spec publish_callback(binary()) :: :ok | {:error, term()}
-  def publish_callback(json_payload) do
-    callback_stream = Prism.Config.stream_callbacks()
-    maxlen = to_string(Prism.Config.callback_stream_maxlen())
+  @spec publish_callback(map()) :: :ok | {:error, term()}
+  def publish_callback(payload_map) do
+    events_stream = Prism.EventBus.Config.events_stream()
+    type = Prism.EventBus.Config.callback_event_type()
 
-    redix_command([
-      "XADD",
-      callback_stream,
-      "MAXLEN",
-      "~",
-      maxlen,
-      "*",
-      "payload",
-      json_payload
-    ])
+    Prism.EventBus.publish(events_stream, type: type, data: payload_map)
   end
 
   # ── Overrides merge ─────────────────────────────────────────────────────

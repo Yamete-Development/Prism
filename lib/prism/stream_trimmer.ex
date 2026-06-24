@@ -21,18 +21,12 @@ defmodule Prism.StreamTrimmer do
   @impl true
   def init(_opts) do
     if Prism.Config.stream_trimmer_enabled?() do
-      fanout_group = Prism.Config.redis_group()
-      callback_group = Prism.Config.callback_consumer_group()
-
-      stream_fast = Prism.Config.stream_fast()
-      stream_slow = Prism.Config.stream_slow()
-      callback_stream = Prism.Config.stream_callbacks()
+      fanout_group = Prism.Config.consumer_group()
+      stream_jobs = Prism.Config.stream_jobs()
       trim_interval = Prism.Config.stream_trim_interval_ms()
 
       streams = [
-        {stream_fast, fanout_group, "fast"},
-        {stream_slow, fanout_group, "slow"},
-        {callback_stream, callback_group, "callbacks"}
+        {stream_jobs, fanout_group, "jobs"}
       ]
 
       Logger.info(
@@ -83,7 +77,9 @@ defmodule Prism.StreamTrimmer do
 
       {:error, %Redix.Error{message: "NOGROUP" <> _}} ->
         # Consumer group hasn't been created yet
-        Logger.debug("[StreamTrimmer] Skipping trim for #{label}: Consumer group doesn't exist yet")
+        Logger.debug(
+          "[StreamTrimmer] Skipping trim for #{label}: Consumer group doesn't exist yet"
+        )
 
       {:error, reason} ->
         Logger.warning("[StreamTrimmer] Skipping trim for #{label}: #{inspect(reason)}")

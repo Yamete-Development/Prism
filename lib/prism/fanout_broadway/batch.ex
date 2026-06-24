@@ -32,7 +32,7 @@ defmodule Prism.FanoutBroadway.Batch do
         polled_at,
         enqueued_at,
         parent_message_id,
-        payload_metadata,
+        _payload_metadata,
         root_hub_id,
         shard_index
       ) do
@@ -344,37 +344,26 @@ defmodule Prism.FanoutBroadway.Batch do
           payload_map
         end
 
-      payload = Jason.encode!(payload_map)
+      Helpers.publish_callback(payload_map)
 
-      callback_stream = Prism.Config.stream_callbacks()
+      events_stream = Prism.EventBus.Config.events_stream()
+      Logger.debug("Published callback to #{events_stream} for batch #{batch_id}#{parent_log}")
 
-      Helpers.publish_callback(payload)
-
-      Logger.debug("Published callback to #{callback_stream} for batch #{batch_id}#{parent_log}")
-
-      event_data = %{
-        batch_id: batch_id,
-        action: action,
-        ok_count: ok_count,
-        fail_count: fail_count,
-        timestamp: :os.system_time(:millisecond)
-      }
-
-      event_data = Map.merge(event_data, payload_metadata || %{})
-
-      Prism.FanoutBroadway.SSE.publish_sse_event(
-        action,
-        targets,
-        shard_index,
-        discord_payload,
-        root_hub_id,
-        payload_metadata,
-        parent_message_id
-      )
-
-      Enum.each(:pg.get_members(:prism_events), fn pid ->
-        send(pid, {:batch_processed, event_data})
-      end)
+      # After publishing callback, notify Beacon via event bus
+      if action == "execute" and root_hub_id do
+        Prism.EventBus.publish("events:bus",
+          type: Prism.EventBus.Config.broadcast_event_type(),
+          data: %{
+            batch_id: batch_id,
+            action: action,
+            ok_count: ok_count,
+            fail_count: fail_count,
+            parent_message_id: parent_message_id,
+            hub_id: root_hub_id,
+            timestamp: :os.system_time(:millisecond)
+          }
+        )
+      end
     end
   end
 

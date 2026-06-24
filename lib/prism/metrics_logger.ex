@@ -20,9 +20,12 @@ defmodule Prism.MetricsLogger do
     process_count = length(:erlang.processes())
     run_queue = :erlang.statistics(:run_queue)
     port_count = length(:erlang.ports())
+    dlq_len = stream_length(Prism.EventBus.Config.events_dlq_stream())
+
+    :telemetry.execute([:prism, :event_bus, :dlq_depth], %{length: dlq_len}, %{})
 
     Logger.info(
-      "[Metrics] Active Broadway Batches: #{batch_count} | Erlang Processes: #{process_count} | Run Queue: #{run_queue} | Open Ports/Sockets: #{port_count} | Fast Stream Len: #{stream_length(Prism.Config.stream_fast())} | Slow Stream Len: #{stream_length(Prism.Config.stream_slow())}"
+      "[Metrics] Active Broadway Batches: #{batch_count} | Erlang Processes: #{process_count} | Run Queue: #{run_queue} | Open Ports/Sockets: #{port_count} | Jobs Stream Len: #{stream_length(Prism.Config.stream_jobs())} | Events DLQ Len: #{dlq_len}"
     )
 
     {:noreply, state}

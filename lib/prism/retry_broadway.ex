@@ -11,7 +11,7 @@ defmodule Prism.RetryBroadway do
 
     redis_opts = Prism.Config.redis_opts()
     stream_key = Prism.Config.stream_retries()
-    redis_group = Prism.Config.redis_group() <> "_retries"
+    consumer_group = Prism.Config.consumer_group() <> "_retries"
 
     broadway_concurrency = Prism.Config.retry_broadway_concurrency()
     receive_interval = Prism.Config.retry_receive_interval()
@@ -25,7 +25,7 @@ defmodule Prism.RetryBroadway do
             client: Prism.RedisClient,
             redis_client_opts: redis_opts,
             stream: stream_key,
-            group: redis_group,
+            group: consumer_group,
             consumer_name:
               "broadcast_worker_retry_" <> Integer.to_string(:os.system_time(:microsecond)),
             make_stream: true,
@@ -86,37 +86,24 @@ defmodule Prism.RetryBroadway do
     end
   end
 
-  defp route_batch_to_fanout(payload, payload_json) do
+  defp route_batch_to_fanout(payload, _payload_json) do
     targets = Map.get(payload, "targets", [])
     target_count = length(targets)
     batch_id = Map.get(payload, "batch_id", "unknown")
 
-    threshold = Prism.Config.slow_lane_threshold()
-
-    stream_key =
-      if target_count > threshold do
-        Prism.Config.stream_slow()
-      else
-        Prism.Config.stream_fast()
-      end
+    stream_key = Prism.Config.stream_jobs()
 
     Logger.info(
-      "[RetryBroadway] Routing batch #{batch_id} (#{target_count} targets) back to fanout stream #{stream_key}"
+      "[RetryBroadway] Routing batch #{batch_id} (#{target_count} targets) back to jobs stream #{stream_key}"
     )
 
-    case Helpers.redix_command([
-           "XADD",
-           stream_key,
-           "*",
-           "payload",
-           payload_json
-         ]) do
-      {:ok, _entry_id} ->
+    case Prism.EventBus.Publisher.publish(stream_key, payload, type: "prism.job.fanout") do
+      :ok ->
         :ok
 
       {:error, reason} ->
         Logger.error(
-          "[RetryBroadway] Failed to XADD batch #{batch_id} to #{stream_key}: #{inspect(reason)}"
+          "[RetryBroadway] Failed to publish batch #{batch_id} to #{stream_key}: #{inspect(reason)}"
         )
     end
   end

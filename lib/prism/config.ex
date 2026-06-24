@@ -16,24 +16,18 @@ defmodule Prism.Config do
 
   # ── Stream keys ────────────────────────────────────────────────────────
 
-  @doc "Fast lane stream key"
-  def stream_fast,
-    do: Application.get_env(:prism, :redis_stream_fast, "prism:stream:fast")
+  @doc "Jobs lane stream key"
+  def stream_jobs,
+    do: Application.get_env(:prism, :stream_jobs, "prism:stream:jobs")
 
-  @doc "Slow lane stream key"
-  def stream_slow,
-    do: Application.get_env(:prism, :redis_stream_slow, "prism:stream:slow")
+
 
   @doc "Retry stream key"
   def stream_retries,
     do: Application.get_env(:prism, :redis_retry_stream, "prism:stream:retries")
 
-  @doc "Callback stream key"
-  def stream_callbacks,
-    do: Application.get_env(:prism, :redis_callback_stream, "prism:stream:callbacks")
-
-  @doc "Redis consumer group name"
-  def redis_group, do: Application.get_env(:prism, :redis_group, "prism:cg:fanout")
+  @doc "Consumer group name"
+  def consumer_group, do: Application.get_env(:prism, :consumer_group, "prism:cg:fanout")
 
   # ── Delayed queue ──────────────────────────────────────────────────────
 
@@ -168,11 +162,9 @@ defmodule Prism.Config do
   @doc "Redis key prefix for cancel checker"
   def cancel_prefix, do: Application.get_env(:prism, :cancel_prefix, "prism:cancel:")
 
-  # ── Stream trimmer ─────────────────────────────────────────────────────
 
-  @doc "Consumer group for callback stream trimming"
-  def callback_consumer_group,
-    do: Application.get_env(:prism, :callback_consumer_group, "prism:cg:callbacks")
+
+  # ── Stream trimmer ─────────────────────────────────────────────────────
 
   @doc "Stream trim interval in ms"
   def stream_trim_interval_ms,
@@ -180,8 +172,7 @@ defmodule Prism.Config do
 
   # ── Broadway tuning ────────────────────────────────────────────────────
 
-  @doc "Threshold for routing to slow lane (> N targets)"
-  def slow_lane_threshold, do: Application.get_env(:prism, :slow_lane_threshold, 80)
+
 
   @doc "Broadway processor concurrency for fanout lanes"
   def broadway_concurrency, do: Application.get_env(:prism, :broadway_concurrency, 50)
@@ -190,11 +181,8 @@ defmodule Prism.Config do
   def retry_broadway_concurrency,
     do: Application.get_env(:prism, :retry_broadway_concurrency, 10)
 
-  @doc "Fast lane receive interval (ms)"
-  def fast_receive_interval, do: Application.get_env(:prism, :fast_receive_interval, 5)
-
-  @doc "Slow lane receive interval (ms)"
-  def slow_receive_interval, do: Application.get_env(:prism, :slow_receive_interval, 5)
+  @doc "Jobs lane receive interval (ms)"
+  def jobs_receive_interval, do: Application.get_env(:prism, :jobs_receive_interval, 5)
 
   @doc "Retry lane receive interval (ms)"
   def retry_receive_interval, do: Application.get_env(:prism, :retry_receive_interval, 100)
@@ -214,15 +202,6 @@ defmodule Prism.Config do
   @doc "Enable/disable preflight Redis batching (pipelines checkpoint + rate-limit reads before fan-out)"
   def preflight_batching_enabled?,
     do: Application.get_env(:prism, :preflight_batching_enabled, true)
-
-  # ── SSE / Dashboard ────────────────────────────────────────────────────
-
-  @doc "Enable/disable SSE publishing"
-  def sse_enabled?, do: Application.get_env(:prism, :redis_sse_enabled, false)
-
-  @doc "SSE topic prefix for Redis PubSub"
-  def sse_topic_prefix,
-    do: Application.get_env(:prism, :redis_sse_topic_prefix, "prism:sse:")
 
   # ── Reply index ────────────────────────────────────────────────────────
 
@@ -255,7 +234,4 @@ defmodule Prism.Config do
 
   @doc "Cancel TTL seconds"
   def cancel_ttl, do: Application.get_env(:prism, :cancel_ttl, 300)
-
-  @doc "Callback stream MAXLEN (~ approximate trimming)"
-  def callback_stream_maxlen, do: Application.get_env(:prism, :callback_stream_maxlen, 100_000)
 end

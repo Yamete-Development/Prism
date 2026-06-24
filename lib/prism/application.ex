@@ -91,12 +91,8 @@ defmodule Prism.Application do
           {Prism.DelayedScheduler, []},
           {Prism.StreamTrimmer, []},
           Supervisor.child_spec(
-            {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Fast, lane: :fast]},
-            id: :fanout_broadway_fast
-          ),
-          Supervisor.child_spec(
-            {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Slow, lane: :slow]},
-            id: :fanout_broadway_slow
+            {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Jobs, lane: :jobs]},
+            id: :fanout_broadway_jobs
           ),
           Supervisor.child_spec(
             {Prism.RetryBroadway, [name: Prism.RetryBroadway]},

@@ -11,43 +11,46 @@ defmodule Prism.FanoutBroadway do
     lane = Keyword.fetch!(opts, :lane)
     name = Keyword.get(opts, :name, __MODULE__)
 
-    redis_opts = Prism.Config.redis_opts()
-
-    stream_key =
-      if lane == :fast do
-        Prism.Config.stream_fast()
-      else
-        Prism.Config.stream_slow()
-      end
-
-    receive_interval =
-      if lane == :fast do
-        Prism.Config.fast_receive_interval()
-      else
-        Prism.Config.slow_receive_interval()
-      end
-
-    redis_group = Prism.Config.redis_group()
-
+    stream_key = Prism.Config.stream_jobs()
+    receive_interval = Prism.Config.jobs_receive_interval()
+    consumer_group = Prism.Config.consumer_group()
     broadway_concurrency = Prism.Config.broadway_concurrency()
+
+    transport_backend = Prism.EventBus.Config.transport_backend()
+
+    producer =
+      if transport_backend == Prism.EventBus.Transport.Kafka do
+        [
+          module: {
+            BroadwayKafka.Producer,
+            [
+              brokers: Prism.EventBus.Config.kafka_brokers(),
+              group_id: consumer_group,
+              topics: [stream_key]
+            ]
+          }
+        ]
+      else
+        [
+          module: {
+            OffBroadwayRedisStream.Producer,
+            [
+              client: Prism.RedisClient,
+              redis_client_opts: Prism.Config.redis_opts(),
+              stream: stream_key,
+              group: consumer_group,
+              consumer_name:
+                "broadcast_worker_#{lane}_" <> Integer.to_string(:os.system_time(:microsecond)),
+              make_stream: true,
+              receive_interval: receive_interval
+            ]
+          }
+        ]
+      end
 
     Broadway.start_link(__MODULE__,
       name: name,
-      producer: [
-        module: {
-          OffBroadwayRedisStream.Producer,
-          [
-            client: Prism.RedisClient,
-            redis_client_opts: redis_opts,
-            stream: stream_key,
-            group: redis_group,
-            consumer_name:
-              "broadcast_worker_#{lane}_" <> Integer.to_string(:os.system_time(:microsecond)),
-            make_stream: true,
-            receive_interval: receive_interval
-          ]
-        }
-      ],
+      producer: producer,
       processors: [
         default: [
           concurrency: broadway_concurrency,
@@ -58,14 +61,30 @@ defmodule Prism.FanoutBroadway do
     )
   end
 
+  defp extract_payload_and_time(data) do
+    case data do
+      [id, fields] ->
+        enqueued_at = Helpers.extract_enqueued_at(id)
+        payload_json = Helpers.get_payload_from_redis_data(fields)
+        {payload_json, enqueued_at}
+
+      binary when is_binary(binary) ->
+        enqueued_at = :os.system_time(:millisecond)
+        {binary, enqueued_at}
+
+      _ ->
+        {"", :os.system_time(:millisecond)}
+    end
+  end
+
   @impl true
   def handle_message(_, %Message{data: data} = message, _) do
     if Prism.Config.backpressure_enabled?() and Prism.RateLimit.unhealthy?() do
       delay_ms = Prism.RateLimit.backoff_ms()
-      [_id, fields] = data
-      payload_json = Helpers.get_payload_from_redis_data(fields)
+      {payload_json, _} = extract_payload_and_time(data)
 
-      with {:ok, raw} <- Jason.decode(payload_json) do
+      with {:ok, ce} <- Jason.decode(payload_json) do
+        raw = Map.get(ce, "data", %{})
         payload = Prism.FanoutBroadway.KeyExpansion.expand_keys(raw)
         Helpers.re_enqueue_on_backpressure(payload, "", delay_ms)
       end
@@ -73,13 +92,11 @@ defmodule Prism.FanoutBroadway do
       message
     else
       polled_at = :os.system_time(:millisecond)
-      [id, fields] = data
-      enqueued_at = Helpers.extract_enqueued_at(id)
-
-      payload_json = Helpers.get_payload_from_redis_data(fields)
+      {payload_json, enqueued_at} = extract_payload_and_time(data)
 
       case Jason.decode(payload_json) do
-        {:ok, raw} ->
+        {:ok, ce} ->
+          raw = Map.get(ce, "data", %{})
           payload = Prism.FanoutBroadway.KeyExpansion.expand_keys(raw)
 
           %{"batch_id" => batch_id, "targets" => targets} = payload

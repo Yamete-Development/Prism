@@ -46,11 +46,9 @@ if config_env() != :test do
       String.to_integer(System.get_env("PRISM_FINCH_IDLE_TIMEOUT_MS") || "60000"),
     finch_keepalive_ms: String.to_integer(System.get_env("PRISM_FINCH_KEEPALIVE_MS") || "30000"),
     discord_base_url: System.get_env("PRISM_DISCORD_BASE_URL") || "https://discord.com",
-    redis_stream_fast: System.get_env("REDIS_STREAM_FAST") || "prism:stream:fast",
-    redis_stream_slow: System.get_env("REDIS_STREAM_SLOW") || "prism:stream:slow",
+    stream_jobs: System.get_env("PRISM_STREAM_JOBS") || "prism:stream:jobs",
     redis_retry_stream: System.get_env("REDIS_RETRY_STREAM") || "prism:stream:retries",
-    redis_callback_stream: System.get_env("REDIS_CALLBACK_STREAM") || "prism:stream:callbacks",
-    redis_group: System.get_env("REDIS_GROUP") || "prism:cg:fanout",
+    consumer_group: System.get_env("PRISM_CONSUMER_GROUP") || "prism:cg:fanout",
     delayed_zset_key: System.get_env("PRISM_DELAYED_ZSET_KEY") || "prism:delayed",
     pubsub_channel: System.get_env("PRISM_PUBSUB_CHANNEL") || "prism:wakeup",
     delayed_scheduler_error_retry_ms:
@@ -60,11 +58,8 @@ if config_env() != :test do
       String.to_integer(System.get_env("PRISM_BATCH_MAX_CONCURRENCY") || "80"),
     retry_broadway_concurrency:
       String.to_integer(System.get_env("PRISM_RETRY_BROADWAY_CONCURRENCY") || "10"),
-    slow_lane_threshold: String.to_integer(System.get_env("PRISM_SLOW_LANE_THRESHOLD") || "80"),
-    fast_receive_interval:
-      String.to_integer(System.get_env("PRISM_FAST_RECEIVE_INTERVAL") || "5"),
-    slow_receive_interval:
-      String.to_integer(System.get_env("PRISM_SLOW_RECEIVE_INTERVAL") || "5"),
+    jobs_receive_interval:
+      String.to_integer(System.get_env("PRISM_JOBS_RECEIVE_INTERVAL") || "5"),
     retry_receive_interval:
       String.to_integer(System.get_env("PRISM_RETRY_RECEIVE_INTERVAL") || "100"),
     queue_time_warn_ms: String.to_integer(System.get_env("PRISM_QUEUE_TIME_WARN_MS") || "2000"),
@@ -106,8 +101,6 @@ if config_env() != :test do
     dead_message_cache_ttl:
       String.to_integer(System.get_env("PRISM_DEAD_MESSAGE_CACHE_TTL") || "1800"),
     cancel_prefix: System.get_env("PRISM_CANCEL_PREFIX") || "prism:cancel:",
-    callback_consumer_group:
-      System.get_env("PRISM_CALLBACK_CONSUMER_GROUP") || "prism:cg:callbacks",
     stream_trim_interval_ms:
       String.to_integer(System.get_env("PRISM_STREAM_TRIM_INTERVAL_MS") || "30000"),
     callback_include_parent_message_id:
@@ -116,10 +109,46 @@ if config_env() != :test do
     reply_index_prefix: System.get_env("PRISM_REPLY_INDEX_PREFIX") || "prism",
     reply_index_ttl_seconds:
       String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800"),
-    redis_sse_enabled: parse_bool.(System.get_env("PRISM_REDIS_SSE_ENABLED") || "false"),
-    redis_sse_topic_prefix: System.get_env("PRISM_REDIS_SSE_TOPIC_PREFIX") || "prism:sse:",
     cancel_ttl: String.to_integer(System.get_env("PRISM_CANCEL_TTL", "300")),
-    cluster_topology: System.get_env("PRISM_CLUSTER_TOPOLOGY") || "prism_cluster"
+    cluster_topology: System.get_env("PRISM_CLUSTER_TOPOLOGY") || "prism_cluster",
+    events_stream: System.get_env("EVENTS_STREAM") || "events:bus",
+    events_dlq_stream: System.get_env("EVENTS_DLQ_STREAM") || "events:bus:dlq",
+    events_stream_maxlen: String.to_integer(System.get_env("EVENTS_STREAM_MAXLEN") || "100000"),
+    event_source: System.get_env("EVENT_SOURCE") || "/prism",
+    event_bus_max_retries: String.to_integer(System.get_env("EVENT_BUS_MAX_RETRIES") || "3"),
+    event_bus_retry_backoff_base_ms:
+      String.to_integer(System.get_env("EVENT_BUS_RETRY_BACKOFF_BASE_MS") || "1000"),
+    event_bus_retry_backoff_max_ms:
+      String.to_integer(System.get_env("EVENT_BUS_RETRY_BACKOFF_MAX_MS") || "30000"),
+    event_bus_consumer_batch_size:
+      String.to_integer(System.get_env("EVENT_BUS_CONSUMER_BATCH_SIZE") || "10"),
+    event_bus_consumer_block_ms:
+      String.to_integer(System.get_env("EVENT_BUS_CONSUMER_BLOCK_MS") || "3000"),
+    event_bus_stale_claim_idle_ms:
+      String.to_integer(System.get_env("EVENT_BUS_STALE_CLAIM_IDLE_MS") || "30000"),
+    event_bus_stale_claim_interval_ms:
+      String.to_integer(System.get_env("EVENT_BUS_STALE_CLAIM_INTERVAL_MS") || "60000"),
+    event_bus_broadcast_type: System.get_env("EVENT_BUS_BROADCAST_TYPE") || "prism.broadcast.completed",
+    event_bus_callback_type: System.get_env("EVENT_BUS_CALLBACK_TYPE") || "prism.callback",
+    kafka_brokers:
+      (System.get_env("KAFKA_BROKERS") || "localhost:9092")
+      |> String.split(",")
+      |> Enum.map(&String.trim/1)
+      |> Enum.map(fn broker ->
+        case String.split(broker, ":") do
+          [host, port] -> {String.to_charlist(host), String.to_integer(port)}
+          [host] -> {String.to_charlist(host), 9092}
+        end
+      end)
+
+  event_bus_transport =
+    case System.get_env("EVENT_BUS_TRANSPORT") || "redis" do
+      "redis" -> Prism.EventBus.Transport.Redis
+      "kafka" -> Module.concat(["Prism.EventBus.Transport.Kafka"])
+      other -> Module.concat([other])
+    end
+
+  config :prism, event_bus_transport_backend: event_bus_transport
 end
 
 config :opentelemetry,

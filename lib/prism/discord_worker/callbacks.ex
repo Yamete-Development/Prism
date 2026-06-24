@@ -61,9 +61,7 @@ defmodule Prism.DiscordWorker.Callbacks do
       payload =
         if parent_msg_id, do: Map.put(payload, "parent_message_id", parent_msg_id), else: payload
 
-      json = Jason.encode!(payload)
-
-      Helpers.publish_callback(json)
+      Helpers.publish_callback(payload)
     end
   end
 end
