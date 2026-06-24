@@ -23,11 +23,20 @@ defmodule Prism.StreamTrimmer do
     if Prism.Config.stream_trimmer_enabled?() do
       fanout_group = Prism.Config.consumer_group()
       stream_jobs = Prism.Config.stream_jobs()
+      stream_retries = Prism.Config.stream_retries()
+      retry_group = fanout_group <> "_retries"
       trim_interval = Prism.Config.stream_trim_interval_ms()
+      
+      transport_backend = Prism.EventBus.Config.transport_backend()
 
-      streams = [
-        {stream_jobs, fanout_group, "jobs"}
-      ]
+      streams =
+        if transport_backend == Prism.EventBus.Transport.Redis do
+          [{stream_jobs, fanout_group, "jobs"}]
+        else
+          []
+        end
+        
+      streams = streams ++ [{stream_retries, retry_group, "retries"}]
 
       Logger.info(
         "[StreamTrimmer] Starting periodic trim every #{div(trim_interval, 1000)}s for #{length(streams)} streams"
