@@ -19,9 +19,9 @@ defmodule Prism.EventBus.Transport do
   @doc """
   Publishes a JSON-encoded event to a stream with approximate length capping.
   """
-  @spec publish(binary(), binary(), pos_integer()) :: :ok | {:error, term()}
-  def publish(stream, json_payload, maxlen) do
-    backend().publish(stream, json_payload, maxlen)
+  @spec publish(binary(), binary(), pos_integer(), map()) :: :ok | {:error, term()}
+  def publish(stream, json_payload, maxlen, headers \\ %{}) do
+    backend().publish(stream, json_payload, maxlen, headers)
   end
 
   @doc """
