@@ -47,15 +47,12 @@ defmodule Prism.DiscordWorker.Callbacks do
           {[succ_info], []}
         end
 
-      new_trace_headers = :otel_propagator_text_map.inject([]) |> Enum.into(%{})
-
       payload = %{
         "batch_id" => batch_id,
         "status" => "partial_retry",
         "action" => action,
         "message_ids" => successes,
-        "failures" => failures,
-        "trace_headers" => new_trace_headers
+        "failures" => failures
       }
 
       payload =
