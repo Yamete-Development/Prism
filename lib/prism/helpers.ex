@@ -230,6 +230,9 @@ defmodule Prism.Helpers do
       %Google.Protobuf.ListValue{values: list} ->
         Enum.map(list, &value_to_elixir/1)
 
+      :NULL_VALUE ->
+        nil
+
       val when is_float(val) ->
         if trunc(val) == val do
           trunc(val)
@@ -251,7 +254,7 @@ defmodule Prism.Helpers do
   """
   def strip_confluent_message_indexes(binary) do
     {length_zigzag, rest} = decode_varint(binary)
-    length = (length_zigzag >>> 1) ^^^ -(length_zigzag &&& 1)
+    length = Bitwise.bxor(length_zigzag >>> 1, -(length_zigzag &&& 1))
     skip_varints(rest, length)
   end
 
