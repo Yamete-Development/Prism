@@ -3,13 +3,14 @@ defmodule Prism.PrismStreamPayload do
   @moduledoc false
   defstruct batch_id: "",
             action: "",
-            payload: nil,
+            payload: "",
             targets: [],
             message_id: nil,
             shard_index: nil,
             hub_id: nil,
             hub_name: nil,
             metadata: nil,
+            payload_struct: nil,
             __uf__: []
 
   (
@@ -35,6 +36,7 @@ defmodule Prism.PrismStreamPayload do
         |> encode_payload(msg)
         |> encode_targets(msg)
         |> encode_metadata(msg)
+        |> encode_payload_struct(msg)
         |> encode_unknown_fields(msg)
       end
     )
@@ -68,10 +70,10 @@ defmodule Prism.PrismStreamPayload do
       end,
       defp encode_payload(acc, msg) do
         try do
-          if msg.payload == nil do
+          if msg.payload == "" do
             acc
           else
-            [acc, "\x1A", Protox.Encode.encode_message(msg.payload)]
+            [acc, "\x1A", Protox.Encode.encode_string(msg.payload)]
           end
         rescue
           ArgumentError ->
@@ -152,6 +154,19 @@ defmodule Prism.PrismStreamPayload do
           ArgumentError ->
             reraise Protox.EncodingError.new(:metadata, "invalid field value"), __STACKTRACE__
         end
+      end,
+      defp encode_payload_struct(acc, msg) do
+        try do
+          if msg.payload_struct == nil do
+            acc
+          else
+            [acc, "R", Protox.Encode.encode_message(msg.payload_struct)]
+          end
+        rescue
+          ArgumentError ->
+            reraise Protox.EncodingError.new(:payload_struct, "invalid field value"),
+                    __STACKTRACE__
+        end
       end
     ]
 
@@ -220,14 +235,7 @@ defmodule Prism.PrismStreamPayload do
             {3, _, bytes} ->
               {len, bytes} = Protox.Varint.decode(bytes)
               {delimited, rest} = Protox.Decode.parse_delimited(bytes, len)
-
-              {[
-                 payload:
-                   Protox.MergeMessage.merge(
-                     msg.payload,
-                     Google.Protobuf.Struct.decode!(delimited)
-                   )
-               ], rest}
+              {[payload: Protox.Decode.validate_string!(delimited)], rest}
 
             {4, _, bytes} ->
               {len, bytes} = Protox.Varint.decode(bytes)
@@ -262,6 +270,18 @@ defmodule Prism.PrismStreamPayload do
                    Protox.MergeMessage.merge(
                      msg.metadata,
                      Prism.PrismStreamMetadata.decode!(delimited)
+                   )
+               ], rest}
+
+            {10, _, bytes} ->
+              {len, bytes} = Protox.Varint.decode(bytes)
+              {delimited, rest} = Protox.Decode.parse_delimited(bytes, len)
+
+              {[
+                 payload_struct:
+                   Protox.MergeMessage.merge(
+                     msg.payload_struct,
+                     Google.Protobuf.Struct.decode!(delimited)
                    )
                ], rest}
 
@@ -328,13 +348,14 @@ defmodule Prism.PrismStreamPayload do
       %{
         1 => {:batch_id, {:scalar, ""}, :string},
         2 => {:action, {:scalar, ""}, :string},
-        3 => {:payload, {:scalar, nil}, {:message, Google.Protobuf.Struct}},
+        3 => {:payload, {:scalar, ""}, :string},
         4 => {:targets, :unpacked, {:message, Prism.PrismTarget}},
         5 => {:message_id, {:oneof, :_message_id}, :string},
         6 => {:shard_index, {:oneof, :_shard_index}, :int32},
         7 => {:hub_id, {:oneof, :_hub_id}, :string},
         8 => {:hub_name, {:oneof, :_hub_name}, :string},
-        9 => {:metadata, {:scalar, nil}, {:message, Prism.PrismStreamMetadata}}
+        9 => {:metadata, {:scalar, nil}, {:message, Prism.PrismStreamMetadata}},
+        10 => {:payload_struct, {:scalar, nil}, {:message, Google.Protobuf.Struct}}
       }
     end
 
@@ -350,7 +371,8 @@ defmodule Prism.PrismStreamPayload do
         hub_name: {8, {:oneof, :_hub_name}, :string},
         message_id: {5, {:oneof, :_message_id}, :string},
         metadata: {9, {:scalar, nil}, {:message, Prism.PrismStreamMetadata}},
-        payload: {3, {:scalar, nil}, {:message, Google.Protobuf.Struct}},
+        payload: {3, {:scalar, ""}, :string},
+        payload_struct: {10, {:scalar, nil}, {:message, Google.Protobuf.Struct}},
         shard_index: {6, {:oneof, :_shard_index}, :int32},
         targets: {4, :unpacked, {:message, Prism.PrismTarget}}
       }
@@ -382,11 +404,11 @@ defmodule Prism.PrismStreamPayload do
         %{
           __struct__: Protox.Field,
           json_name: "payload",
-          kind: {:scalar, nil},
+          kind: {:scalar, ""},
           label: :optional,
           name: :payload,
           tag: 3,
-          type: {:message, Google.Protobuf.Struct}
+          type: :string
         },
         %{
           __struct__: Protox.Field,
@@ -441,6 +463,15 @@ defmodule Prism.PrismStreamPayload do
           name: :metadata,
           tag: 9,
           type: {:message, Prism.PrismStreamMetadata}
+        },
+        %{
+          __struct__: Protox.Field,
+          json_name: "payloadStruct",
+          kind: {:scalar, nil},
+          label: :optional,
+          name: :payload_struct,
+          tag: 10,
+          type: {:message, Google.Protobuf.Struct}
         }
       ]
     end
@@ -522,11 +553,11 @@ defmodule Prism.PrismStreamPayload do
            %{
              __struct__: Protox.Field,
              json_name: "payload",
-             kind: {:scalar, nil},
+             kind: {:scalar, ""},
              label: :optional,
              name: :payload,
              tag: 3,
-             type: {:message, Google.Protobuf.Struct}
+             type: :string
            }}
         end
 
@@ -535,11 +566,11 @@ defmodule Prism.PrismStreamPayload do
            %{
              __struct__: Protox.Field,
              json_name: "payload",
-             kind: {:scalar, nil},
+             kind: {:scalar, ""},
              label: :optional,
              name: :payload,
              tag: 3,
-             type: {:message, Google.Protobuf.Struct}
+             type: :string
            }}
         end
 
@@ -763,6 +794,46 @@ defmodule Prism.PrismStreamPayload do
 
         []
       ),
+      (
+        def field_def(:payload_struct) do
+          {:ok,
+           %{
+             __struct__: Protox.Field,
+             json_name: "payloadStruct",
+             kind: {:scalar, nil},
+             label: :optional,
+             name: :payload_struct,
+             tag: 10,
+             type: {:message, Google.Protobuf.Struct}
+           }}
+        end
+
+        def field_def("payloadStruct") do
+          {:ok,
+           %{
+             __struct__: Protox.Field,
+             json_name: "payloadStruct",
+             kind: {:scalar, nil},
+             label: :optional,
+             name: :payload_struct,
+             tag: 10,
+             type: {:message, Google.Protobuf.Struct}
+           }}
+        end
+
+        def field_def("payload_struct") do
+          {:ok,
+           %{
+             __struct__: Protox.Field,
+             json_name: "payloadStruct",
+             kind: {:scalar, nil},
+             label: :optional,
+             name: :payload_struct,
+             tag: 10,
+             type: {:message, Google.Protobuf.Struct}
+           }}
+        end
+      ),
       def field_def(_) do
         {:error, :no_such_field}
       end
@@ -809,7 +880,7 @@ defmodule Prism.PrismStreamPayload do
       {:ok, ""}
     end,
     def default(:payload) do
-      {:ok, nil}
+      {:ok, ""}
     end,
     def default(:targets) do
       {:error, :no_default_value}
@@ -827,6 +898,9 @@ defmodule Prism.PrismStreamPayload do
       {:error, :no_default_value}
     end,
     def default(:metadata) do
+      {:ok, nil}
+    end,
+    def default(:payload_struct) do
       {:ok, nil}
     end,
     def default(_) do

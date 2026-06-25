@@ -10,6 +10,7 @@ defmodule Prism.PrismTarget do
             message_id: nil,
             overrides: nil,
             connection_id: nil,
+            overrides_struct: nil,
             __uf__: []
 
   (
@@ -30,11 +31,12 @@ defmodule Prism.PrismTarget do
         |> encode_hub_id(msg)
         |> encode_thread_id(msg)
         |> encode_message_id(msg)
+        |> encode_overrides(msg)
         |> encode_connection_id(msg)
         |> encode_channel_id(msg)
         |> encode_webhook_id(msg)
         |> encode_webhook_token(msg)
-        |> encode_overrides(msg)
+        |> encode_overrides_struct(msg)
         |> encode_unknown_fields(msg)
       end
     )
@@ -125,10 +127,9 @@ defmodule Prism.PrismTarget do
       end,
       defp encode_overrides(acc, msg) do
         try do
-          if msg.overrides == nil do
-            acc
-          else
-            [acc, "B", Protox.Encode.encode_message(msg.overrides)]
+          case msg.overrides do
+            nil -> [acc]
+            child_field_value -> [acc, "B", Protox.Encode.encode_string(child_field_value)]
           end
         rescue
           ArgumentError ->
@@ -144,6 +145,19 @@ defmodule Prism.PrismTarget do
         rescue
           ArgumentError ->
             reraise Protox.EncodingError.new(:connection_id, "invalid field value"),
+                    __STACKTRACE__
+        end
+      end,
+      defp encode_overrides_struct(acc, msg) do
+        try do
+          if msg.overrides_struct == nil do
+            acc
+          else
+            [acc, "R", Protox.Encode.encode_message(msg.overrides_struct)]
+          end
+        rescue
+          ArgumentError ->
+            reraise Protox.EncodingError.new(:overrides_struct, "invalid field value"),
                     __STACKTRACE__
         end
       end
@@ -239,19 +253,24 @@ defmodule Prism.PrismTarget do
             {8, _, bytes} ->
               {len, bytes} = Protox.Varint.decode(bytes)
               {delimited, rest} = Protox.Decode.parse_delimited(bytes, len)
-
-              {[
-                 overrides:
-                   Protox.MergeMessage.merge(
-                     msg.overrides,
-                     Google.Protobuf.Struct.decode!(delimited)
-                   )
-               ], rest}
+              {[overrides: Protox.Decode.validate_string!(delimited)], rest}
 
             {9, _, bytes} ->
               {len, bytes} = Protox.Varint.decode(bytes)
               {delimited, rest} = Protox.Decode.parse_delimited(bytes, len)
               {[connection_id: Protox.Decode.validate_string!(delimited)], rest}
+
+            {10, _, bytes} ->
+              {len, bytes} = Protox.Varint.decode(bytes)
+              {delimited, rest} = Protox.Decode.parse_delimited(bytes, len)
+
+              {[
+                 overrides_struct:
+                   Protox.MergeMessage.merge(
+                     msg.overrides_struct,
+                     Google.Protobuf.Struct.decode!(delimited)
+                   )
+               ], rest}
 
             {tag, wire_type, rest} ->
               {value, rest} = Protox.Decode.parse_unknown(tag, wire_type, rest)
@@ -321,8 +340,9 @@ defmodule Prism.PrismTarget do
         5 => {:hub_id, {:oneof, :_hub_id}, :string},
         6 => {:thread_id, {:oneof, :_thread_id}, :string},
         7 => {:message_id, {:oneof, :_message_id}, :string},
-        8 => {:overrides, {:scalar, nil}, {:message, Google.Protobuf.Struct}},
-        9 => {:connection_id, {:oneof, :_connection_id}, :string}
+        8 => {:overrides, {:oneof, :_overrides}, :string},
+        9 => {:connection_id, {:oneof, :_connection_id}, :string},
+        10 => {:overrides_struct, {:scalar, nil}, {:message, Google.Protobuf.Struct}}
       }
     end
 
@@ -337,7 +357,8 @@ defmodule Prism.PrismTarget do
         guild_id: {4, {:oneof, :_guild_id}, :string},
         hub_id: {5, {:oneof, :_hub_id}, :string},
         message_id: {7, {:oneof, :_message_id}, :string},
-        overrides: {8, {:scalar, nil}, {:message, Google.Protobuf.Struct}},
+        overrides: {8, {:oneof, :_overrides}, :string},
+        overrides_struct: {10, {:scalar, nil}, {:message, Google.Protobuf.Struct}},
         thread_id: {6, {:oneof, :_thread_id}, :string},
         webhook_id: {2, {:scalar, ""}, :string},
         webhook_token: {3, {:scalar, ""}, :string}
@@ -415,11 +436,11 @@ defmodule Prism.PrismTarget do
         %{
           __struct__: Protox.Field,
           json_name: "overrides",
-          kind: {:scalar, nil},
-          label: :optional,
+          kind: {:oneof, :_overrides},
+          label: :proto3_optional,
           name: :overrides,
           tag: 8,
-          type: {:message, Google.Protobuf.Struct}
+          type: :string
         },
         %{
           __struct__: Protox.Field,
@@ -429,6 +450,15 @@ defmodule Prism.PrismTarget do
           name: :connection_id,
           tag: 9,
           type: :string
+        },
+        %{
+          __struct__: Protox.Field,
+          json_name: "overridesStruct",
+          kind: {:scalar, nil},
+          label: :optional,
+          name: :overrides_struct,
+          tag: 10,
+          type: {:message, Google.Protobuf.Struct}
         }
       ]
     end
@@ -721,11 +751,11 @@ defmodule Prism.PrismTarget do
            %{
              __struct__: Protox.Field,
              json_name: "overrides",
-             kind: {:scalar, nil},
-             label: :optional,
+             kind: {:oneof, :_overrides},
+             label: :proto3_optional,
              name: :overrides,
              tag: 8,
-             type: {:message, Google.Protobuf.Struct}
+             type: :string
            }}
         end
 
@@ -734,11 +764,11 @@ defmodule Prism.PrismTarget do
            %{
              __struct__: Protox.Field,
              json_name: "overrides",
-             kind: {:scalar, nil},
-             label: :optional,
+             kind: {:oneof, :_overrides},
+             label: :proto3_optional,
              name: :overrides,
              tag: 8,
-             type: {:message, Google.Protobuf.Struct}
+             type: :string
            }}
         end
 
@@ -781,6 +811,46 @@ defmodule Prism.PrismTarget do
              name: :connection_id,
              tag: 9,
              type: :string
+           }}
+        end
+      ),
+      (
+        def field_def(:overrides_struct) do
+          {:ok,
+           %{
+             __struct__: Protox.Field,
+             json_name: "overridesStruct",
+             kind: {:scalar, nil},
+             label: :optional,
+             name: :overrides_struct,
+             tag: 10,
+             type: {:message, Google.Protobuf.Struct}
+           }}
+        end
+
+        def field_def("overridesStruct") do
+          {:ok,
+           %{
+             __struct__: Protox.Field,
+             json_name: "overridesStruct",
+             kind: {:scalar, nil},
+             label: :optional,
+             name: :overrides_struct,
+             tag: 10,
+             type: {:message, Google.Protobuf.Struct}
+           }}
+        end
+
+        def field_def("overrides_struct") do
+          {:ok,
+           %{
+             __struct__: Protox.Field,
+             json_name: "overridesStruct",
+             kind: {:scalar, nil},
+             label: :optional,
+             name: :overrides_struct,
+             tag: 10,
+             type: {:message, Google.Protobuf.Struct}
            }}
         end
       ),
@@ -845,10 +915,13 @@ defmodule Prism.PrismTarget do
       {:error, :no_default_value}
     end,
     def default(:overrides) do
-      {:ok, nil}
+      {:error, :no_default_value}
     end,
     def default(:connection_id) do
       {:error, :no_default_value}
+    end,
+    def default(:overrides_struct) do
+      {:ok, nil}
     end,
     def default(_) do
       {:error, :no_such_field}

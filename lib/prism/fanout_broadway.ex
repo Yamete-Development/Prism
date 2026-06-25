@@ -116,12 +116,19 @@ defmodule Prism.FanoutBroadway do
 
         batch_id = payload.batch_id
         targets = Enum.map(payload.targets, fn t ->
-          # Parse overrides from Protobuf Struct
+          # Parse overrides from Protobuf Struct or legacy JSON
           overrides = 
-            if is_nil(t.overrides) do
-              nil
+            if not is_nil(t.overrides_struct) do
+              Prism.Helpers.struct_to_map(t.overrides_struct)
             else
-              Prism.Helpers.struct_to_map(t.overrides)
+              if is_nil(t.overrides) or t.overrides == "" do
+                nil
+              else
+                case Jason.decode(t.overrides) do
+                  {:ok, o} -> o
+                  _ -> nil
+                end
+              end
             end
 
           %{
@@ -138,8 +145,16 @@ defmodule Prism.FanoutBroadway do
         end)
         action = if payload.action == "", do: "execute", else: payload.action
         
-        # Payload is now a Protobuf Struct, mapped to JSON internally
-        discord_payload = Prism.Helpers.struct_to_map(payload.payload)
+        # Payload is now a Protobuf Struct, or legacy JSON string
+        discord_payload = 
+          if not is_nil(payload.payload_struct) do
+            Prism.Helpers.struct_to_map(payload.payload_struct)
+          else
+            case Jason.decode(payload.payload || "") do
+              {:ok, p} -> p
+              _ -> %{}
+            end
+          end
         
         parent_message_id = payload.message_id
         metadata = if payload.metadata do
