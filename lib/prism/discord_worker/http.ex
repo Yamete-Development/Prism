@@ -160,8 +160,27 @@ defmodule Prism.DiscordWorker.HTTP do
 
         {:ok, %{status: 400, body: resp_body}} ->
           Logger.error(
-            "Bad request webhook_id=#{webhook_id} body=#{resp_body} – dropping permanently."
+            "Bad request webhook_id=#{webhook_id} body=#{resp_body} – sending to DLQ and dropping permanently."
           )
+
+          Prism.Helpers.redix_command([
+            "XADD",
+            "prism.dlq.bad_requests",
+            "MAXLEN",
+            "~",
+            "10000",
+            "*",
+            "webhook_id",
+            webhook_id || "",
+            "url",
+            url || "",
+            "method",
+            method_str || "",
+            "request_body",
+            body || "",
+            "response_body",
+            resp_body || ""
+          ])
 
           {:error, :permanent}
 
