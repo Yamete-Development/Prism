@@ -7,8 +7,9 @@ defmodule Prism.EventBus.Transport.Kafka do
     _ = :brod.start_producer(:kafka_client, stream, [])
 
     kafka_headers = Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)
+    batch = [%{key: "", value: payload, headers: kafka_headers}]
 
-    case :brod.produce_sync(:kafka_client, stream, 0, "", [{:value, payload}, {:headers, kafka_headers}]) do
+    case :brod.produce_sync(:kafka_client, stream, 0, "", batch) do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
     end
