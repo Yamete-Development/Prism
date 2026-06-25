@@ -2,11 +2,13 @@ defmodule Prism.EventBus.Transport.Kafka do
   @behaviour Prism.EventBus.Transport.Behaviour
 
   @impl true
-  def publish(stream, payload, _maxlen) do
+  def publish(stream, payload, _maxlen, headers) do
     # Ensure a producer is started for this topic (idempotent; ignores {:error, {:already_started, _}})
     _ = :brod.start_producer(:kafka_client, stream, [])
 
-    case :brod.produce_sync(:kafka_client, stream, 0, "", payload) do
+    kafka_headers = Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)
+
+    case :brod.produce_sync(:kafka_client, stream, 0, "", [{:value, payload}, {:headers, kafka_headers}]) do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
     end

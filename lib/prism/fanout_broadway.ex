@@ -104,19 +104,24 @@ defmodule Prism.FanoutBroadway do
       {payload_binary, enqueued_at} = extract_payload_and_time(data)
 
       try do
-        payload = Prism.PrismStreamPayload.decode!(payload_binary)
+        payload = case payload_binary do
+          <<0, schema_id::32-integer, protobuf_data::binary>> ->
+            case Prism.SchemaRegistry.get_schema(schema_id) do
+              {:ok, _} -> Prism.PrismStreamPayload.decode!(protobuf_data)
+              {:error, _} -> raise "Unknown Schema ID: #{schema_id}"
+            end
+          _ ->
+            Prism.PrismStreamPayload.decode!(payload_binary)
+        end
 
         batch_id = payload.batch_id
         targets = Enum.map(payload.targets, fn t ->
-          # Parse overrides if present
+          # Parse overrides from Protobuf Struct
           overrides = 
-            if is_nil(t.overrides) or t.overrides == "" do
+            if is_nil(t.overrides) do
               nil
             else
-              case Jason.decode(t.overrides) do
-                {:ok, o} -> o
-                _ -> nil
-              end
+              Prism.Helpers.struct_to_map(t.overrides)
             end
 
           %{
@@ -127,16 +132,14 @@ defmodule Prism.FanoutBroadway do
             "hub_id" => t.hub_id,
             "thread_id" => if(is_nil(t.thread_id) or t.thread_id == "", do: nil, else: t.thread_id),
             "message_id" => if(is_nil(t.message_id) or t.message_id == "", do: nil, else: t.message_id),
-            "overrides" => overrides
+            "overrides" => overrides,
+            "connection_id" => t.connection_id
           }
         end)
         action = if payload.action == "", do: "execute", else: payload.action
         
-        # Payload is stored as a JSON string inside the protobuf for flexibility
-        discord_payload = case Jason.decode(payload.payload) do
-          {:ok, p} -> p
-          _ -> %{}
-        end
+        # Payload is now a Protobuf Struct, mapped to JSON internally
+        discord_payload = Prism.Helpers.struct_to_map(payload.payload)
         
         parent_message_id = payload.message_id
         metadata = if payload.metadata do

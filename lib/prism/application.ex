@@ -104,6 +104,7 @@ defmodule Prism.Application do
           {Prism.RateLimit.Backpressure, []},
           {Prism.RateLimit.InvalidRequestTracker, []},
           {Prism.DelayedScheduler, []},
+          {Prism.SchemaRegistry, []},
           {Prism.StreamTrimmer, []},
           Supervisor.child_spec(
             {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Jobs, lane: :jobs]},

@@ -209,4 +209,23 @@ defmodule Prism.Helpers do
   defp is_nil_or_empty_list?(nil), do: true
   defp is_nil_or_empty_list?(list) when is_list(list), do: list == []
   defp is_nil_or_empty_list?(_), do: false
+
+  # ── Protobuf Struct Decoder ──────────────────────────────────────────────
+
+  @doc """
+  Recursively converts a Google.Protobuf.Struct into a standard Elixir map.
+  """
+  def struct_to_map(%Google.Protobuf.Struct{fields: fields}) do
+    Map.new(fields, fn {k, v} -> {k, value_to_elixir(v)} end)
+  end
+  def struct_to_map(nil), do: %{}
+
+  defp value_to_elixir(%Google.Protobuf.Value{kind: {_, v}}) do
+    case v do
+      %Google.Protobuf.Struct{} = s -> struct_to_map(s)
+      %Google.Protobuf.ListValue{values: list} -> Enum.map(list, &value_to_elixir/1)
+      val -> val
+    end
+  end
+  defp value_to_elixir(nil), do: nil
 end

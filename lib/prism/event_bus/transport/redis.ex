@@ -13,16 +13,17 @@ defmodule Prism.EventBus.Transport.Redis do
   require Logger
 
   @impl true
-  def publish(stream, json_payload, maxlen) do
+  def publish(stream, payload, maxlen, headers) do
+    fields = ["payload", payload]
+    fields = Enum.reduce(headers, fields, fn {k, v}, acc -> ["ce_#{k}", to_string(v) | acc] end)
+    
     redis_command([
       "XADD",
       stream,
       "MAXLEN",
       "~",
       to_string(maxlen),
-      "*",
-      "payload",
-      json_payload
+      "*" | Enum.reverse(fields)
     ])
   end
 
@@ -106,22 +107,24 @@ defmodule Prism.EventBus.Transport.Redis do
 
   defp to_messages(stream, entries) when is_list(entries) do
     Enum.map(entries, fn [id, fields] ->
-      payload = extract_payload(fields)
+      {payload, headers} = extract_payload_and_headers(fields)
 
       %Message{
         id: id,
         stream: stream,
-        data: payload || ""
+        data: payload || "",
+        headers: headers
       }
     end)
   end
 
-  defp extract_payload(fields) when is_list(fields) do
+  defp extract_payload_and_headers(fields) when is_list(fields) do
     fields
     |> Enum.chunk_every(2)
-    |> Enum.find_value(fn
-      ["payload", value] -> value
-      _ -> nil
+    |> Enum.reduce({nil, %{}}, fn
+      ["payload", value], {_, headers} -> {value, headers}
+      [<<"ce_", key::binary>>, value], {payload, headers} -> {payload, Map.put(headers, key, value)}
+      [key, value], {payload, headers} -> {payload, Map.put(headers, key, value)}
     end)
   end
 end

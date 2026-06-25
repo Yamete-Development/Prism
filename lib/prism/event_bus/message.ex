@@ -7,11 +7,12 @@ defmodule Prism.EventBus.Message do
   Kafka, or any other backend.
   """
 
-  defstruct [:id, :stream, :data]
+  defstruct [:id, :stream, :data, headers: %{}]
 
   @type t :: %__MODULE__{
           id: String.t(),
           stream: String.t(),
-          data: String.t()
+          data: binary(),
+          headers: map()
         }
 end
