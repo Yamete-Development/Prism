@@ -16,7 +16,8 @@ defmodule Prism.EventBus.Publisher do
 
     cloud_event = build_envelope(type, source, data)
 
-    json = Jason.encode!(cloud_event)
+    payload_json = Jason.encode!(cloud_event["data"])
+    headers = extract_headers(cloud_event)
 
     OpenTelemetry.Tracer.with_span "eventbus.publish" do
       OpenTelemetry.Tracer.set_attributes([
@@ -31,7 +32,7 @@ defmodule Prism.EventBus.Publisher do
         type: type
       })
 
-      case Transport.publish(stream, json, maxlen) do
+      case Transport.publish(stream, payload_json, maxlen, headers) do
         :ok -> :ok
         {:ok, _id} -> :ok
         {:error, reason} -> {:error, reason}
@@ -64,7 +65,8 @@ defmodule Prism.EventBus.Publisher do
     type = cloud_event["type"]
     id = cloud_event["id"]
 
-    json = Jason.encode!(cloud_event)
+    payload_json = Jason.encode!(cloud_event["data"])
+    headers = extract_headers(cloud_event)
 
     OpenTelemetry.Tracer.with_span "eventbus.publish" do
       OpenTelemetry.Tracer.set_attributes([
@@ -79,7 +81,7 @@ defmodule Prism.EventBus.Publisher do
         type: type
       })
 
-      case Transport.publish(stream, json, maxlen) do
+      case Transport.publish(stream, payload_json, maxlen, headers) do
         :ok -> :ok
         {:ok, _id} -> :ok
         {:error, reason} -> {:error, reason}
@@ -117,5 +119,12 @@ defmodule Prism.EventBus.Publisher do
 
   defp generate_id do
     :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
+  end
+
+  defp extract_headers(cloud_event) do
+    cloud_event
+    |> Map.delete("data")
+    |> Enum.map(fn {k, v} -> {"ce_#{k}", v} end)
+    |> Enum.into(%{})
   end
 end

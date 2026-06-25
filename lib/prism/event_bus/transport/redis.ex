@@ -14,7 +14,7 @@ defmodule Prism.EventBus.Transport.Redis do
 
   @impl true
   def publish(stream, payload, maxlen, headers) do
-    header_fields = Enum.flat_map(headers, fn {k, v} -> ["ce_#{k}", to_string(v)] end)
+    header_fields = Enum.flat_map(headers, fn {k, v} -> [to_string(k), to_string(v)] end)
     fields = ["payload", payload | header_fields]
 
     redis_command([
