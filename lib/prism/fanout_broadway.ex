@@ -105,9 +105,11 @@ defmodule Prism.FanoutBroadway do
 
       try do
         payload = case payload_binary do
-          <<0, schema_id::32-integer, protobuf_data::binary>> ->
+          <<0, schema_id::32-integer, confluent_data::binary>> ->
             case Prism.SchemaRegistry.get_schema(schema_id) do
-              {:ok, _} -> Prism.PrismStreamPayload.decode!(protobuf_data)
+              {:ok, _} ->
+                protobuf_data = Prism.Helpers.strip_confluent_message_indexes(confluent_data)
+                Prism.PrismStreamPayload.decode!(protobuf_data)
               {:error, _} -> raise "Unknown Schema ID: #{schema_id}"
             end
           _ ->

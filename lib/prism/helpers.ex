@@ -4,6 +4,7 @@ defmodule Prism.Helpers do
   """
 
   require Logger
+  import Bitwise
 
   # ── Redis command helpers ──────────────────────────────────────────────
 
@@ -228,4 +229,29 @@ defmodule Prism.Helpers do
     end
   end
   defp value_to_elixir(nil), do: nil
+
+  # ── Confluent Protobuf Wire Format ───────────────────────────────────────
+
+  @doc """
+  Strips the message index array from a Confluent Protobuf binary payload.
+  """
+  def strip_confluent_message_indexes(binary) do
+    {length_zigzag, rest} = decode_varint(binary)
+    length = (length_zigzag >>> 1) ^^^ -(length_zigzag &&& 1)
+    skip_varints(rest, length)
+  end
+
+  defp decode_varint(binary, acc \\ 0, shift \\ 0)
+  defp decode_varint(<<0::1, val::7, rest::binary>>, acc, shift) do
+    {acc ||| (val <<< shift), rest}
+  end
+  defp decode_varint(<<1::1, val::7, rest::binary>>, acc, shift) do
+    decode_varint(rest, acc ||| (val <<< shift), shift + 7)
+  end
+
+  defp skip_varints(binary, 0), do: binary
+  defp skip_varints(binary, count) do
+    {_, rest} = decode_varint(binary)
+    skip_varints(rest, count - 1)
+  end
 end
