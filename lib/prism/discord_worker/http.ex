@@ -171,15 +171,15 @@ defmodule Prism.DiscordWorker.HTTP do
             "10000",
             "*",
             "webhook_id",
-            webhook_id || "",
+            webhook_id,
             "url",
-            url || "",
+            url,
             "method",
-            method_str || "",
+            method_str,
             "request_body",
-            body || "",
+            if(is_nil(body), do: "", else: IO.iodata_to_binary(body)),
             "response_body",
-            resp_body || ""
+            resp_body
           ])
 
           {:error, :permanent}
