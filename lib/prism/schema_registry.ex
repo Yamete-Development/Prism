@@ -33,7 +33,8 @@ defmodule Prism.SchemaRegistry do
   @doc """
   Registers a schema (if needed) and returns its ID, utilizing local cache.
   """
-  def get_schema_id(subject, schema_string) when is_binary(subject) and is_binary(schema_string) do
+  def get_schema_id(subject, schema_string)
+      when is_binary(subject) and is_binary(schema_string) do
     case :ets.lookup(@table, {:subject, subject}) do
       [{_, id}] -> {:ok, id}
       [] -> register_and_cache_schema(subject, schema_string)
@@ -47,17 +48,17 @@ defmodule Prism.SchemaRegistry do
   defp fetch_and_cache_schema(schema_id) do
     req_url = "#{url()}/schemas/ids/#{schema_id}"
     req = Finch.build(:get, req_url)
-    
+
     case Finch.request(req, DiscordFinch) do
       {:ok, %Finch.Response{status: 200, body: body}} ->
         schema = Jason.decode!(body)["schema"]
         :ets.insert(@table, {{:id, schema_id}, schema})
         {:ok, schema}
-        
+
       {:ok, %Finch.Response{status: status, body: body}} ->
         Logger.error("[SchemaRegistry] Error fetching #{schema_id}: #{status} - #{body}")
         {:error, :not_found}
-        
+
       {:error, reason} ->
         Logger.error("[SchemaRegistry] Connection error: #{inspect(reason)}")
         {:error, reason}
@@ -69,18 +70,18 @@ defmodule Prism.SchemaRegistry do
     body = Jason.encode!(%{schema: schema_string, schemaType: "PROTOBUF"})
     headers = [{"content-type", "application/vnd.schemaregistry.v1+json"}]
     req = Finch.build(:post, req_url, headers, body)
-    
+
     case Finch.request(req, DiscordFinch) do
       {:ok, %Finch.Response{status: status, body: resp_body}} when status in 200..299 ->
         id = Jason.decode!(resp_body)["id"]
         :ets.insert(@table, {{:subject, subject}, id})
         :ets.insert(@table, {{:id, id}, schema_string})
         {:ok, id}
-        
+
       {:ok, %Finch.Response{status: status, body: resp_body}} ->
         Logger.error("[SchemaRegistry] Error registering #{subject}: #{status} - #{resp_body}")
         {:error, :registration_failed}
-        
+
       {:error, reason} ->
         Logger.error("[SchemaRegistry] Connection error: #{inspect(reason)}")
         {:error, reason}

@@ -14,16 +14,16 @@ defmodule Prism.EventBus.Transport.Redis do
 
   @impl true
   def publish(stream, payload, maxlen, headers) do
-    fields = ["payload", payload]
-    fields = Enum.reduce(headers, fields, fn {k, v}, acc -> ["ce_#{k}", to_string(v) | acc] end)
-    
+    header_fields = Enum.flat_map(headers, fn {k, v} -> ["ce_#{k}", to_string(v)] end)
+    fields = ["payload", payload | header_fields]
+
     redis_command([
       "XADD",
       stream,
       "MAXLEN",
       "~",
       to_string(maxlen),
-      "*" | Enum.reverse(fields)
+      "*" | fields
     ])
   end
 
@@ -122,9 +122,14 @@ defmodule Prism.EventBus.Transport.Redis do
     fields
     |> Enum.chunk_every(2)
     |> Enum.reduce({nil, %{}}, fn
-      ["payload", value], {_, headers} -> {value, headers}
-      [<<"ce_", key::binary>>, value], {payload, headers} -> {payload, Map.put(headers, key, value)}
-      [key, value], {payload, headers} -> {payload, Map.put(headers, key, value)}
+      ["payload", value], {_, headers} ->
+        {value, headers}
+
+      [<<"ce_", key::binary>>, value], {payload, headers} ->
+        {payload, Map.put(headers, key, value)}
+
+      [key, value], {payload, headers} ->
+        {payload, Map.put(headers, key, value)}
     end)
   end
 end

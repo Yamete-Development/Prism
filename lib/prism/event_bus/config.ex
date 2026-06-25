@@ -45,10 +45,12 @@ defmodule Prism.EventBus.Config do
     do: Application.get_env(:prism, :event_bus_stale_claim_interval_ms, 60_000)
 
   @doc "CloudEvent type for broadcast completion"
-  def broadcast_event_type, do: Application.get_env(:prism, :event_bus_broadcast_type, "prism.broadcast.completed")
+  def broadcast_event_type,
+    do: Application.get_env(:prism, :event_bus_broadcast_type, "prism.broadcast.completed")
 
   @doc "CloudEvent type for batch callbacks"
-  def callback_event_type, do: Application.get_env(:prism, :event_bus_callback_type, "prism.callback")
+  def callback_event_type,
+    do: Application.get_env(:prism, :event_bus_callback_type, "prism.callback")
 
   @doc "Transport backend module (default: Prism.EventBus.Transport.Redis)"
   def transport_backend,

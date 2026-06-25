@@ -81,8 +81,7 @@ defmodule Prism.EventBus.Consumer do
         Keyword.get(opts, :retry_backoff_max_ms, Config.retry_backoff_max_ms()),
       batch_size: Keyword.get(opts, :consumer_batch_size, Config.consumer_batch_size()),
       block_ms: Keyword.get(opts, :consumer_block_ms, Config.consumer_block_ms()),
-      stale_claim_idle_ms:
-        Keyword.get(opts, :stale_claim_idle_ms, Config.stale_claim_idle_ms()),
+      stale_claim_idle_ms: Keyword.get(opts, :stale_claim_idle_ms, Config.stale_claim_idle_ms()),
       stale_claim_interval_ms:
         Keyword.get(opts, :stale_claim_interval_ms, Config.stale_claim_interval_ms())
     }
@@ -207,7 +206,12 @@ defmodule Prism.EventBus.Consumer do
             "[EventBus.Consumer] Invalid CloudEvent payload for message #{id}. ACKing and sending to DLQ."
           )
 
-          DLQ.publish(%{"id" => id, "type" => "unknown"}, "invalid cloud event envelope", 0, state.consumer_group)
+          DLQ.publish(
+            %{"id" => id, "type" => "unknown"},
+            "invalid cloud event envelope",
+            0,
+            state.consumer_group
+          )
 
           ack_message(state, [id])
 
@@ -216,7 +220,12 @@ defmodule Prism.EventBus.Consumer do
             "[EventBus.Consumer] Failed to parse payload for message #{id}: #{inspect(reason)}"
           )
 
-          DLQ.publish(%{"id" => id, "type" => "unknown"}, "json decode error: #{inspect(reason)}", 0, state.consumer_group)
+          DLQ.publish(
+            %{"id" => id, "type" => "unknown"},
+            "json decode error: #{inspect(reason)}",
+            0,
+            state.consumer_group
+          )
 
           ack_message(state, [id])
       end
@@ -374,5 +383,4 @@ defmodule Prism.EventBus.Consumer do
     ref = Process.send_after(self(), :poll, 0)
     %{state | poll_timer_ref: ref}
   end
-
 end

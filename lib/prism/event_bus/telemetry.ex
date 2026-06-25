@@ -37,7 +37,8 @@ defmodule Prism.EventBus.Telemetry do
 
   Returns `{ctx, span_ctx}` for the attach/end pattern or `{nil, nil}` on error.
   """
-  @spec span_consume(map(), binary(), binary()) :: {OpenTelemetry.Ctx.t(), OpenTelemetry.Span.span_ctx()}
+  @spec span_consume(map(), binary(), binary()) ::
+          {OpenTelemetry.Ctx.t(), OpenTelemetry.Span.span_ctx()}
   def span_consume(cloud_event, stream, consumer_group) do
     type = cloud_event["type"]
     event_id = cloud_event["id"]

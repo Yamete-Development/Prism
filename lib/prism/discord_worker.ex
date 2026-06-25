@@ -55,7 +55,8 @@ defmodule Prism.DiscordWorker do
           else
             overrides = Map.get(target, "overrides")
 
-            if is_map(content) and action in ["execute", "edit"] and is_map(overrides) and map_size(overrides) > 0 do
+            if is_map(content) and action in ["execute", "edit"] and is_map(overrides) and
+                 map_size(overrides) > 0 do
               merged = Helpers.merge_overrides(content, target, action)
               Jason.encode_to_iodata!(merged)
             else

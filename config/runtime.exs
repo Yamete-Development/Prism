@@ -128,7 +128,8 @@ if config_env() != :test do
       String.to_integer(System.get_env("EVENT_BUS_STALE_CLAIM_IDLE_MS") || "30000"),
     event_bus_stale_claim_interval_ms:
       String.to_integer(System.get_env("EVENT_BUS_STALE_CLAIM_INTERVAL_MS") || "60000"),
-    event_bus_broadcast_type: System.get_env("EVENT_BUS_BROADCAST_TYPE") || "prism.broadcast.completed",
+    event_bus_broadcast_type:
+      System.get_env("EVENT_BUS_BROADCAST_TYPE") || "prism.broadcast.completed",
     event_bus_callback_type: System.get_env("EVENT_BUS_CALLBACK_TYPE") || "prism.callback",
     kafka_brokers:
       (System.get_env("KAFKA_BROKERS") || "localhost:9092")

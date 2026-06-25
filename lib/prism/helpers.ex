@@ -219,15 +219,29 @@ defmodule Prism.Helpers do
   def struct_to_map(%Google.Protobuf.Struct{fields: fields}) do
     Map.new(fields, fn {k, v} -> {k, value_to_elixir(v)} end)
   end
+
   def struct_to_map(nil), do: %{}
 
   defp value_to_elixir(%Google.Protobuf.Value{kind: {_, v}}) do
     case v do
-      %Google.Protobuf.Struct{} = s -> struct_to_map(s)
-      %Google.Protobuf.ListValue{values: list} -> Enum.map(list, &value_to_elixir/1)
-      val -> val
+      %Google.Protobuf.Struct{} = s ->
+        struct_to_map(s)
+
+      %Google.Protobuf.ListValue{values: list} ->
+        Enum.map(list, &value_to_elixir/1)
+
+      val when is_float(val) ->
+        if trunc(val) == val do
+          trunc(val)
+        else
+          val
+        end
+
+      val ->
+        val
     end
   end
+
   defp value_to_elixir(nil), do: nil
 
   # ── Confluent Protobuf Wire Format ───────────────────────────────────────
@@ -242,14 +256,17 @@ defmodule Prism.Helpers do
   end
 
   defp decode_varint(binary, acc \\ 0, shift \\ 0)
+
   defp decode_varint(<<0::1, val::7, rest::binary>>, acc, shift) do
-    {acc ||| (val <<< shift), rest}
+    {acc ||| val <<< shift, rest}
   end
+
   defp decode_varint(<<1::1, val::7, rest::binary>>, acc, shift) do
-    decode_varint(rest, acc ||| (val <<< shift), shift + 7)
+    decode_varint(rest, acc ||| val <<< shift, shift + 7)
   end
 
   defp skip_varints(binary, 0), do: binary
+
   defp skip_varints(binary, count) do
     {_, rest} = decode_varint(binary)
     skip_varints(rest, count - 1)

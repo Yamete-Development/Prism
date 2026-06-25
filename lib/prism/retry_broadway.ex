@@ -92,10 +92,15 @@ defmodule Prism.RetryBroadway do
       Logger.info("[RetryBroadway] Routing protobuf batch back to jobs stream #{stream_key}")
 
       bytes = Base.decode64!(Map.fetch!(payload, "bytes"))
+
       case Prism.EventBus.Publisher.publish_raw(stream_key, bytes) do
-        :ok -> :ok
+        :ok ->
+          :ok
+
         {:error, reason} ->
-          Logger.error("[RetryBroadway] Failed to publish protobuf batch to #{stream_key}: #{inspect(reason)}")
+          Logger.error(
+            "[RetryBroadway] Failed to publish protobuf batch to #{stream_key}: #{inspect(reason)}"
+          )
       end
     else
       targets = Map.get(payload, "targets", [])

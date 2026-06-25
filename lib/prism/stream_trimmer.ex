@@ -26,7 +26,7 @@ defmodule Prism.StreamTrimmer do
       stream_retries = Prism.Config.stream_retries()
       retry_group = fanout_group <> "_retries"
       trim_interval = Prism.Config.stream_trim_interval_ms()
-      
+
       transport_backend = Prism.EventBus.Config.transport_backend()
 
       streams =
@@ -35,7 +35,7 @@ defmodule Prism.StreamTrimmer do
         else
           []
         end
-        
+
       streams = streams ++ [{stream_retries, retry_group, "retries"}]
 
       Logger.info(

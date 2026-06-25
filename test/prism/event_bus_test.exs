@@ -75,7 +75,8 @@ defmodule Prism.EventBusTest do
     end
 
     test "builds envelope with correct ID format" do
-      cloud_event = Publisher.build_envelope("fun.interchat.test", "/prism-test", %{"key" => "val"})
+      cloud_event =
+        Publisher.build_envelope("fun.interchat.test", "/prism-test", %{"key" => "val"})
 
       assert String.starts_with?(cloud_event["id"], "evt_")
       assert String.length(cloud_event["id"]) == 36
@@ -85,7 +86,10 @@ defmodule Prism.EventBusTest do
       assert cloud_event["data"] == %{"key" => "val"}
     end
 
-    test "publish_cloud_event/3 publishes a pre-built envelope", %{redix_conn: redix_conn, stream: stream} do
+    test "publish_cloud_event/3 publishes a pre-built envelope", %{
+      redix_conn: redix_conn,
+      stream: stream
+    } do
       cloud_event = %{
         "specversion" => "1.0",
         "type" => "fun.interchat.test.forwarded",
@@ -151,9 +155,10 @@ defmodule Prism.EventBusTest do
         "data" => %{"will_fail" => true}
       }
 
-      assert :ok = DLQ.publish(cloud_event, "handler timed out", 3, "test-consumer",
-               dlq_stream: dlq_stream
-             )
+      assert :ok =
+               DLQ.publish(cloud_event, "handler timed out", 3, "test-consumer",
+                 dlq_stream: dlq_stream
+               )
 
       assert 1 = Redix.command!(redix_conn, ["XLEN", dlq_stream])
 
@@ -206,7 +211,11 @@ defmodule Prism.EventBusTest do
       Process.exit(consumer, :normal)
     end
 
-    test "retries on handler failure then DLQ", %{redix_conn: redix_conn, stream: stream, dlq_stream: dlq_stream} do
+    test "retries on handler failure then DLQ", %{
+      redix_conn: redix_conn,
+      stream: stream,
+      dlq_stream: dlq_stream
+    } do
       test_pid = self()
 
       {:ok, consumer} =

@@ -20,8 +20,6 @@ defmodule Prism.Config do
   def stream_jobs,
     do: Application.get_env(:prism, :stream_jobs, "prism.stream.jobs")
 
-
-
   @doc "Retry stream key"
   def stream_retries,
     do: Application.get_env(:prism, :redis_retry_stream, "prism.stream.retries")
@@ -162,8 +160,6 @@ defmodule Prism.Config do
   @doc "Redis key prefix for cancel checker"
   def cancel_prefix, do: Application.get_env(:prism, :cancel_prefix, "prism:cancel:")
 
-
-
   # ── Stream trimmer ─────────────────────────────────────────────────────
 
   @doc "Stream trim interval in ms"
@@ -171,8 +167,6 @@ defmodule Prism.Config do
     do: Application.get_env(:prism, :stream_trim_interval_ms, 30_000)
 
   # ── Broadway tuning ────────────────────────────────────────────────────
-
-
 
   @doc "Broadway processor concurrency for fanout lanes"
   def broadway_concurrency, do: Application.get_env(:prism, :broadway_concurrency, 50)

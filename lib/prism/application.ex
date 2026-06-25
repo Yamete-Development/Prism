@@ -61,7 +61,9 @@ defmodule Prism.Application do
         [
           %{
             id: :kafka_client,
-            start: {:brod, :start_link_client, [Prism.EventBus.Config.kafka_brokers(), :kafka_client, []]}
+            start:
+              {:brod, :start_link_client,
+               [Prism.EventBus.Config.kafka_brokers(), :kafka_client, []]}
           }
         ]
       else

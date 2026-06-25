@@ -19,7 +19,12 @@ defmodule Prism.EventBus.Transport.Behaviour do
 
   Returns `:ok` on success or `{:error, reason}` on failure.
   """
-  @callback publish(stream :: String.t(), payload :: binary(), maxlen :: pos_integer(), headers :: map()) ::
+  @callback publish(
+              stream :: String.t(),
+              payload :: binary(),
+              maxlen :: pos_integer(),
+              headers :: map()
+            ) ::
               :ok | {:error, term()}
 
   @doc """
