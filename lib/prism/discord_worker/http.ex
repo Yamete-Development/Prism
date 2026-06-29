@@ -80,7 +80,7 @@ defmodule Prism.DiscordWorker.HTTP do
   end
 
   defp do_http_request_internal(method, method_str, url, headers, body, webhook_id, message_id) do
-    if Helpers.empty_discord_payload?(body) do
+    if method != :delete and Helpers.empty_discord_payload?(body) do
       Logger.warning(
         "Skipping webhook_id=#{webhook_id} method=#{method_str} — empty payload (no content, embeds, or components)"
       )
