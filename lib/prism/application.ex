@@ -8,7 +8,7 @@ defmodule Prism.Application do
     require Logger
 
     unless Node.alive?() do
-      case Node.start(:prism, name_domain: :shortnames) do
+      case Node.start(:prism, :shortnames) do
         {:ok, _pid} ->
           :ok
 
