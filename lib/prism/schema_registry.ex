@@ -42,7 +42,7 @@ defmodule Prism.SchemaRegistry do
   end
 
   defp url do
-    System.get_env("SCHEMA_REGISTRY_URL") || "http://localhost:8081"
+    Application.get_env(:prism, :schema_registry_url, "http://localhost:8081")
   end
 
   defp fetch_and_cache_schema(schema_id) do

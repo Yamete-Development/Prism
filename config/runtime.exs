@@ -1,7 +1,10 @@
 import Config
+import Dotenvy
+
+Dotenvy.source!([".env", ".env.local", System.get_env()])
 
 log_level =
-  case String.downcase(System.get_env("LOG_LEVEL") || "info") do
+  case String.downcase(env!("LOG_LEVEL", :string, "info")) do
     "debug" -> :debug
     "info" -> :info
     "warning" -> :warning
@@ -12,22 +15,14 @@ log_level =
 
 config :logger, level: log_level
 
-parse_bool = fn value ->
-  String.trim(String.downcase(to_string(value || "true"))) in ["1", "true", "yes", "on"]
-end
-
-redis_host = System.get_env("REDIS_HOST") || "localhost"
-redis_port = String.to_integer(System.get_env("REDIS_PORT") || "6379")
-redis_password = System.get_env("REDIS_PASSWORD")
-
 redis_opts = [
-  host: redis_host,
-  port: redis_port,
-  database: String.to_integer(System.get_env("REDIS_DB") || "0")
+  host: env!("REDIS_HOST", :string, "localhost"),
+  port: env!("REDIS_PORT", :integer, 6379),
+  database: env!("REDIS_DB", :integer, 0)
 ]
 
 redis_opts =
-  if redis_password do
+  if redis_password = env!("REDIS_PASSWORD", :string, nil) do
     Keyword.put(redis_opts, :password, redis_password)
   else
     redis_opts
@@ -37,107 +32,74 @@ config :prism, redis_opts: redis_opts
 
 if config_env() != :test do
   config :prism,
-    redix_pool_size: String.to_integer(System.get_env("PRISM_REDIX_POOL_SIZE") || "5"),
-    finch_pool_count: String.to_integer(System.get_env("PRISM_FINCH_POOL_COUNT") || "50"),
-    finch_receive_timeout_ms:
-      String.to_integer(System.get_env("PRISM_FINCH_RECEIVE_TIMEOUT_MS") || "30000"),
-    finch_pool_timeout_ms:
-      String.to_integer(System.get_env("PRISM_FINCH_POOL_TIMEOUT_MS") || "10000"),
-    finch_idle_timeout_ms:
-      String.to_integer(System.get_env("PRISM_FINCH_IDLE_TIMEOUT_MS") || "60000"),
-    finch_keepalive_ms: String.to_integer(System.get_env("PRISM_FINCH_KEEPALIVE_MS") || "30000"),
-    discord_base_url: System.get_env("PRISM_DISCORD_BASE_URL") || "https://discord.com",
-    stream_jobs: System.get_env("PRISM_STREAM_JOBS") || "prism.stream.jobs",
-    redis_retry_stream: System.get_env("REDIS_RETRY_STREAM") || "prism.stream.retries",
-    consumer_group: System.get_env("PRISM_CONSUMER_GROUP") || "prism:cg:fanout",
-    delayed_zset_key: System.get_env("PRISM_DELAYED_ZSET_KEY") || "prism:delayed",
-    pubsub_channel: System.get_env("PRISM_PUBSUB_CHANNEL") || "prism:wakeup",
-    delayed_scheduler_error_retry_ms:
-      String.to_integer(System.get_env("PRISM_DELAYED_SCHEDULER_ERROR_RETRY_MS") || "5000"),
-    broadway_concurrency: String.to_integer(System.get_env("PRISM_BROADWAY_CONCURRENCY") || "50"),
-    broadway_max_demand: String.to_integer(System.get_env("PRISM_BROADWAY_MAX_DEMAND") || "50"),
-    broadway_min_demand: String.to_integer(System.get_env("PRISM_BROADWAY_MIN_DEMAND") || "5"),
-    fanout_producer_count:
-      String.to_integer(System.get_env("PRISM_FANOUT_PRODUCER_COUNT") || "3"),
-    batch_max_concurrency:
-      String.to_integer(System.get_env("PRISM_BATCH_MAX_CONCURRENCY") || "80"),
-    retry_broadway_concurrency:
-      String.to_integer(System.get_env("PRISM_RETRY_BROADWAY_CONCURRENCY") || "10"),
-    jobs_receive_interval:
-      String.to_integer(System.get_env("PRISM_JOBS_RECEIVE_INTERVAL") || "5"),
-    retry_receive_interval:
-      String.to_integer(System.get_env("PRISM_RETRY_RECEIVE_INTERVAL") || "100"),
-    queue_time_warn_ms: String.to_integer(System.get_env("PRISM_QUEUE_TIME_WARN_MS") || "2000"),
-    task_timeout_ms: String.to_integer(System.get_env("PRISM_TASK_TIMEOUT_MS") || "60000"),
-    max_async_batches: String.to_integer(System.get_env("PRISM_MAX_ASYNC_BATCHES") || "300"),
-    backpressure_enabled: parse_bool.(System.get_env("PRISM_BACKPRESSURE_ENABLED") || "true"),
-    backpressure_max_backoff_ms:
-      String.to_integer(System.get_env("PRISM_BACKPRESSURE_MAX_BACKOFF_MS") || "600000"),
-    backpressure_min_cooldown_ms:
-      String.to_integer(System.get_env("PRISM_BACKPRESSURE_MIN_COOLDOWN_MS") || "60000"),
-    invalid_request_window_ms:
-      String.to_integer(System.get_env("PRISM_INVALID_REQUEST_WINDOW_MS") || "600000"),
-    invalid_request_backpressure_threshold:
-      String.to_integer(System.get_env("PRISM_INVALID_REQUEST_BACKPRESSURE_THRESHOLD") || "9500"),
-    invalid_request_critical_threshold:
-      String.to_integer(System.get_env("PRISM_INVALID_REQUEST_CRITICAL_THRESHOLD") || "10000"),
-    bucket_hash_ttl_seconds:
-      String.to_integer(System.get_env("PRISM_BUCKET_HASH_TTL_SECONDS") || "3600"),
-    server_error_base_delay_ms:
-      String.to_integer(System.get_env("PRISM_SERVER_ERROR_BASE_DELAY_MS") || "2000"),
-    server_error_max_retries:
-      String.to_integer(System.get_env("PRISM_SERVER_ERROR_MAX_RETRIES") || "3"),
-    network_error_base_delay_ms:
-      String.to_integer(System.get_env("PRISM_NETWORK_ERROR_BASE_DELAY_MS") || "1000"),
-    network_error_max_retries:
-      String.to_integer(System.get_env("PRISM_NETWORK_ERROR_MAX_RETRIES") || "5"),
-    message_not_found_max_retries:
-      String.to_integer(System.get_env("PRISM_MESSAGE_NOT_FOUND_MAX_RETRIES") || "5"),
-    rate_limit_defer_threshold_ms:
-      String.to_integer(System.get_env("PRISM_RATE_LIMIT_DEFER_THRESHOLD_MS") || "10000"),
-    checkpoint_ttl_seconds:
-      String.to_integer(System.get_env("PRISM_CHECKPOINT_TTL_SECONDS") || "86400"),
-    dead_message_cache_enabled:
-      parse_bool.(System.get_env("PRISM_DEAD_MESSAGE_CACHE_ENABLED") || "true"),
-    key_expansion_enabled: parse_bool.(System.get_env("PRISM_KEY_EXPANSION_ENABLED") || "true"),
-    cancel_checker_enabled: parse_bool.(System.get_env("PRISM_CANCEL_CHECKER_ENABLED") || "true"),
-    stream_trimmer_enabled: parse_bool.(System.get_env("PRISM_STREAM_TRIMMER_ENABLED") || "true"),
-    dead_message_cache_prefix: System.get_env("PRISM_DEAD_MESSAGE_CACHE_PREFIX") || "prism:dead:",
-    dead_message_cache_ttl:
-      String.to_integer(System.get_env("PRISM_DEAD_MESSAGE_CACHE_TTL") || "1800"),
-    cancel_prefix: System.get_env("PRISM_CANCEL_PREFIX") || "prism:cancel:",
-    stream_trim_interval_ms:
-      String.to_integer(System.get_env("PRISM_STREAM_TRIM_INTERVAL_MS") || "30000"),
-    callback_include_parent_message_id:
-      parse_bool.(System.get_env("PRISM_INCLUDE_PARENT_MESSAGE_ID")),
-    reply_index_enabled: parse_bool.(System.get_env("PRISM_REPLY_INDEX_ENABLED")),
-    reply_index_prefix: System.get_env("PRISM_REPLY_INDEX_PREFIX") || "prism",
-    reply_index_ttl_seconds:
-      String.to_integer(System.get_env("PRISM_REPLY_INDEX_TTL_SECONDS") || "604800"),
-    cancel_ttl: String.to_integer(System.get_env("PRISM_CANCEL_TTL", "300")),
-    cluster_topology: System.get_env("PRISM_CLUSTER_TOPOLOGY") || "prism_cluster",
-    events_stream: System.get_env("EVENTS_STREAM") || "events.bus",
-    events_dlq_stream: System.get_env("EVENTS_DLQ_STREAM") || "events.bus.dlq",
-    events_stream_maxlen: String.to_integer(System.get_env("EVENTS_STREAM_MAXLEN") || "100000"),
-    event_source: System.get_env("EVENT_SOURCE") || "/prism",
-    event_bus_max_retries: String.to_integer(System.get_env("EVENT_BUS_MAX_RETRIES") || "3"),
-    event_bus_retry_backoff_base_ms:
-      String.to_integer(System.get_env("EVENT_BUS_RETRY_BACKOFF_BASE_MS") || "1000"),
-    event_bus_retry_backoff_max_ms:
-      String.to_integer(System.get_env("EVENT_BUS_RETRY_BACKOFF_MAX_MS") || "30000"),
-    event_bus_consumer_batch_size:
-      String.to_integer(System.get_env("EVENT_BUS_CONSUMER_BATCH_SIZE") || "10"),
-    event_bus_consumer_block_ms:
-      String.to_integer(System.get_env("EVENT_BUS_CONSUMER_BLOCK_MS") || "3000"),
-    event_bus_stale_claim_idle_ms:
-      String.to_integer(System.get_env("EVENT_BUS_STALE_CLAIM_IDLE_MS") || "30000"),
-    event_bus_stale_claim_interval_ms:
-      String.to_integer(System.get_env("EVENT_BUS_STALE_CLAIM_INTERVAL_MS") || "60000"),
-    event_bus_broadcast_type:
-      System.get_env("EVENT_BUS_BROADCAST_TYPE") || "prism.broadcast.completed",
-    event_bus_callback_type: System.get_env("EVENT_BUS_CALLBACK_TYPE") || "prism.callback",
+    redix_pool_size: env!("PRISM_REDIX_POOL_SIZE", :integer, 5),
+    finch_pool_count: env!("PRISM_FINCH_POOL_COUNT", :integer, 50),
+    finch_receive_timeout_ms: env!("PRISM_FINCH_RECEIVE_TIMEOUT_MS", :integer, 30000),
+    finch_pool_timeout_ms: env!("PRISM_FINCH_POOL_TIMEOUT_MS", :integer, 10000),
+    finch_idle_timeout_ms: env!("PRISM_FINCH_IDLE_TIMEOUT_MS", :integer, 60000),
+    finch_keepalive_ms: env!("PRISM_FINCH_KEEPALIVE_MS", :integer, 30000),
+    discord_base_url: env!("PRISM_DISCORD_BASE_URL", :string, "https://discord.com"),
+    stream_jobs: env!("PRISM_STREAM_JOBS", :string, "prism.stream.jobs"),
+    redis_retry_stream: env!("REDIS_RETRY_STREAM", :string, "prism.stream.retries"),
+    consumer_group: env!("PRISM_CONSUMER_GROUP", :string, "prism:cg:fanout"),
+    delayed_zset_key: env!("PRISM_DELAYED_ZSET_KEY", :string, "prism:delayed"),
+    pubsub_channel: env!("PRISM_PUBSUB_CHANNEL", :string, "prism:wakeup"),
+    delayed_scheduler_error_retry_ms: env!("PRISM_DELAYED_SCHEDULER_ERROR_RETRY_MS", :integer, 5000),
+    broadway_concurrency: env!("PRISM_BROADWAY_CONCURRENCY", :integer, 50),
+    broadway_max_demand: env!("PRISM_BROADWAY_MAX_DEMAND", :integer, 50),
+    broadway_min_demand: env!("PRISM_BROADWAY_MIN_DEMAND", :integer, 5),
+    fanout_producer_count: env!("PRISM_FANOUT_PRODUCER_COUNT", :integer, 3),
+    batch_max_concurrency: env!("PRISM_BATCH_MAX_CONCURRENCY", :integer, 80),
+    retry_broadway_concurrency: env!("PRISM_RETRY_BROADWAY_CONCURRENCY", :integer, 10),
+    jobs_receive_interval: env!("PRISM_JOBS_RECEIVE_INTERVAL", :integer, 5),
+    retry_receive_interval: env!("PRISM_RETRY_RECEIVE_INTERVAL", :integer, 100),
+    queue_time_warn_ms: env!("PRISM_QUEUE_TIME_WARN_MS", :integer, 2000),
+    task_timeout_ms: env!("PRISM_TASK_TIMEOUT_MS", :integer, 60000),
+    max_async_batches: env!("PRISM_MAX_ASYNC_BATCHES", :integer, 300),
+    backpressure_enabled: env!("PRISM_BACKPRESSURE_ENABLED", :boolean, true),
+    backpressure_max_backoff_ms: env!("PRISM_BACKPRESSURE_MAX_BACKOFF_MS", :integer, 600000),
+    backpressure_min_cooldown_ms: env!("PRISM_BACKPRESSURE_MIN_COOLDOWN_MS", :integer, 60000),
+    invalid_request_window_ms: env!("PRISM_INVALID_REQUEST_WINDOW_MS", :integer, 600000),
+    invalid_request_backpressure_threshold: env!("PRISM_INVALID_REQUEST_BACKPRESSURE_THRESHOLD", :integer, 9500),
+    invalid_request_critical_threshold: env!("PRISM_INVALID_REQUEST_CRITICAL_THRESHOLD", :integer, 10000),
+    bucket_hash_ttl_seconds: env!("PRISM_BUCKET_HASH_TTL_SECONDS", :integer, 3600),
+    server_error_base_delay_ms: env!("PRISM_SERVER_ERROR_BASE_DELAY_MS", :integer, 2000),
+    server_error_max_retries: env!("PRISM_SERVER_ERROR_MAX_RETRIES", :integer, 3),
+    network_error_base_delay_ms: env!("PRISM_NETWORK_ERROR_BASE_DELAY_MS", :integer, 1000),
+    network_error_max_retries: env!("PRISM_NETWORK_ERROR_MAX_RETRIES", :integer, 5),
+    message_not_found_max_retries: env!("PRISM_MESSAGE_NOT_FOUND_MAX_RETRIES", :integer, 5),
+    rate_limit_defer_threshold_ms: env!("PRISM_RATE_LIMIT_DEFER_THRESHOLD_MS", :integer, 10000),
+    checkpoint_ttl_seconds: env!("PRISM_CHECKPOINT_TTL_SECONDS", :integer, 86400),
+    dead_message_cache_enabled: env!("PRISM_DEAD_MESSAGE_CACHE_ENABLED", :boolean, true),
+    key_expansion_enabled: env!("PRISM_KEY_EXPANSION_ENABLED", :boolean, true),
+    cancel_checker_enabled: env!("PRISM_CANCEL_CHECKER_ENABLED", :boolean, true),
+    stream_trimmer_enabled: env!("PRISM_STREAM_TRIMMER_ENABLED", :boolean, true),
+    dead_message_cache_prefix: env!("PRISM_DEAD_MESSAGE_CACHE_PREFIX", :string, "prism:dead:"),
+    dead_message_cache_ttl: env!("PRISM_DEAD_MESSAGE_CACHE_TTL", :integer, 1800),
+    cancel_prefix: env!("PRISM_CANCEL_PREFIX", :string, "prism:cancel:"),
+    stream_trim_interval_ms: env!("PRISM_STREAM_TRIM_INTERVAL_MS", :integer, 30000),
+    callback_include_parent_message_id: env!("PRISM_INCLUDE_PARENT_MESSAGE_ID", :boolean, false),
+    reply_index_enabled: env!("PRISM_REPLY_INDEX_ENABLED", :boolean, false),
+    reply_index_prefix: env!("PRISM_REPLY_INDEX_PREFIX", :string, "prism"),
+    reply_index_ttl_seconds: env!("PRISM_REPLY_INDEX_TTL_SECONDS", :integer, 604800),
+    cancel_ttl: env!("PRISM_CANCEL_TTL", :integer, 300),
+    cluster_topology: env!("PRISM_CLUSTER_TOPOLOGY", :string, "prism_cluster"),
+    events_stream: env!("EVENTS_STREAM", :string, "events.bus"),
+    events_dlq_stream: env!("EVENTS_DLQ_STREAM", :string, "events.bus.dlq"),
+    events_stream_maxlen: env!("EVENTS_STREAM_MAXLEN", :integer, 100000),
+    event_source: env!("EVENT_SOURCE", :string, "/prism"),
+    event_bus_max_retries: env!("EVENT_BUS_MAX_RETRIES", :integer, 3),
+    event_bus_retry_backoff_base_ms: env!("EVENT_BUS_RETRY_BACKOFF_BASE_MS", :integer, 1000),
+    event_bus_retry_backoff_max_ms: env!("EVENT_BUS_RETRY_BACKOFF_MAX_MS", :integer, 30000),
+    event_bus_consumer_batch_size: env!("EVENT_BUS_CONSUMER_BATCH_SIZE", :integer, 10),
+    event_bus_consumer_block_ms: env!("EVENT_BUS_CONSUMER_BLOCK_MS", :integer, 3000),
+    event_bus_stale_claim_idle_ms: env!("EVENT_BUS_STALE_CLAIM_IDLE_MS", :integer, 30000),
+    event_bus_stale_claim_interval_ms: env!("EVENT_BUS_STALE_CLAIM_INTERVAL_MS", :integer, 60000),
+    event_bus_broadcast_type: env!("EVENT_BUS_BROADCAST_TYPE", :string, "prism.broadcast.completed"),
+    event_bus_callback_type: env!("EVENT_BUS_CALLBACK_TYPE", :string, "prism.callback"),
+    schema_registry_url: env!("SCHEMA_REGISTRY_URL", :string, "http://localhost:8081"),
     kafka_brokers:
-      (System.get_env("KAFKA_BROKERS") || "localhost:9092")
+      env!("KAFKA_BROKERS", :string, "localhost:9092")
       |> String.split(",")
       |> Enum.map(&String.trim/1)
       |> Enum.map(fn broker ->
@@ -148,7 +110,7 @@ if config_env() != :test do
       end)
 
   event_bus_transport =
-    case System.get_env("EVENT_BUS_TRANSPORT") || "redis" do
+    case String.downcase(env!("EVENT_BUS_TRANSPORT", :string, "redis")) do
       "redis" -> Prism.EventBus.Transport.Redis
       "kafka" -> Module.concat(["Prism.EventBus.Transport.Kafka"])
       other -> Module.concat([other])
@@ -163,4 +125,4 @@ config :opentelemetry,
 
 config :opentelemetry_exporter,
   otlp_protocol: :http_protobuf,
-  otlp_endpoint: System.get_env("OTEL_EXPORTER_OTLP_ENDPOINT") || "http://localhost:4318"
+  otlp_endpoint: env!("OTEL_EXPORTER_OTLP_ENDPOINT", :string, "http://localhost:4318")

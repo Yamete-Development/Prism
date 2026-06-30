@@ -26,6 +26,7 @@ defmodule Prism.MixProject do
       {:broadway, "~> 1.1"},
       {:off_broadway_redis_stream, "~> 0.7"},
       {:finch, "~> 0.18"},
+      {:dotenvy, "~> 1.1"},
       {:jason, "~> 1.4"},
       {:redix, "~> 1.4"},
       {:libcluster, "~> 3.4"},
