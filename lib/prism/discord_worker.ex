@@ -579,6 +579,42 @@ defmodule Prism.DiscordWorker do
                   :permanent
                 )
 
+              {:error, :invalid_webhook} ->
+                Logger.warning("Invalid webhook error for webhook_id=#{webhook_id}, not retrying.")
+
+                Callbacks.publish_partial(
+                  action,
+                  target,
+                  batch_id,
+                  parent_msg_id,
+                  nil,
+                  :invalid_webhook
+                )
+
+              {:error, :message_not_found} ->
+                Logger.info("Message not found error for webhook_id=#{webhook_id}, not retrying.")
+
+                Callbacks.publish_partial(
+                  action,
+                  target,
+                  batch_id,
+                  parent_msg_id,
+                  nil,
+                  :message_not_found
+                )
+
+              {:error, :empty_payload} ->
+                Logger.warning("Empty payload error for webhook_id=#{webhook_id}, not retrying.")
+
+                Callbacks.publish_partial(
+                  action,
+                  target,
+                  batch_id,
+                  parent_msg_id,
+                  nil,
+                  :empty_payload
+                )
+
               {:ok, msg_id} ->
                 Logger.info(
                   "Successfully delivered to webhook_id=#{webhook_id} on Attempt #{attempt}!"
