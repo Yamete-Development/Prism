@@ -192,7 +192,7 @@ defmodule Prism.FanoutBroadway do
             )
           else
             max_async = Prism.Config.max_async_batches()
-            current = Supervisor.count_children(Prism.TaskSup).active
+            current = Prism.AsyncBatchCounter.count()
 
             if current < max_async do
               Prism.FanoutBroadway.Batch.spawn_async_batch(

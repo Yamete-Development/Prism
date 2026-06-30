@@ -406,6 +406,8 @@ defmodule Prism.FanoutBroadway.Batch do
         shard_index
       ) do
     case Task.Supervisor.start_child(Prism.TaskSup, fn ->
+           Prism.AsyncBatchCounter.increment()
+
            try do
              process_batch(
                action,
@@ -439,6 +441,8 @@ defmodule Prism.FanoutBroadway.Batch do
                  )
 
                Prism.DelayedQueue.enqueue(payload, 5_000)
+           after
+             Prism.AsyncBatchCounter.decrement()
            end
          end) do
       {:ok, _pid} ->

@@ -70,6 +70,9 @@ defmodule Prism.Application do
         []
       end
 
+    # Initialise the lock-free async batch counter before any Broadway starts
+    Prism.AsyncBatchCounter.init()
+
     children =
       if Node.alive?() do
         [{Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]}]

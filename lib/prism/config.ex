@@ -12,7 +12,7 @@ defmodule Prism.Config do
   def redis_opts, do: Application.get_env(:prism, :redis_opts, host: "localhost", port: 6379)
 
   @doc "Number of Redix connections in the pool"
-  def redix_pool_size, do: Application.get_env(:prism, :redix_pool_size, 5)
+  def redix_pool_size, do: Application.get_env(:prism, :redix_pool_size, 10)
 
   # ── Stream keys ────────────────────────────────────────────────────────
 
