@@ -372,6 +372,8 @@ defmodule Prism.FanoutBroadway.Batch do
           }
         )
       end
+
+      Prism.AsyncBatchCounter.add_processed(length(targets))
     end
   end
 

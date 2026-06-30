@@ -54,10 +54,8 @@ if config_env() != :test do
     delayed_scheduler_error_retry_ms:
       String.to_integer(System.get_env("PRISM_DELAYED_SCHEDULER_ERROR_RETRY_MS") || "5000"),
     broadway_concurrency: String.to_integer(System.get_env("PRISM_BROADWAY_CONCURRENCY") || "50"),
-    broadway_max_demand:
-      String.to_integer(System.get_env("PRISM_BROADWAY_MAX_DEMAND") || "50"),
-    broadway_min_demand:
-      String.to_integer(System.get_env("PRISM_BROADWAY_MIN_DEMAND") || "5"),
+    broadway_max_demand: String.to_integer(System.get_env("PRISM_BROADWAY_MAX_DEMAND") || "50"),
+    broadway_min_demand: String.to_integer(System.get_env("PRISM_BROADWAY_MIN_DEMAND") || "5"),
     fanout_producer_count:
       String.to_integer(System.get_env("PRISM_FANOUT_PRODUCER_COUNT") || "3"),
     batch_max_concurrency:
