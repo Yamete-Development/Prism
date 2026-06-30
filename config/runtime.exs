@@ -22,7 +22,8 @@ redis_password = System.get_env("REDIS_PASSWORD")
 
 redis_opts = [
   host: redis_host,
-  port: redis_port
+  port: redis_port,
+  database: String.to_integer(System.get_env("REDIS_DB") || "0")
 ]
 
 redis_opts =
