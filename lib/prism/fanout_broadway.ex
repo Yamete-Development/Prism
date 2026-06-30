@@ -58,8 +58,8 @@ defmodule Prism.FanoutBroadway do
       processors: [
         default: [
           concurrency: broadway_concurrency,
-          max_demand: 10,
-          min_demand: 0
+          max_demand: Prism.Config.broadway_max_demand(),
+          min_demand: Prism.Config.broadway_min_demand()
         ]
       ]
     )

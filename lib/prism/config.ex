@@ -171,6 +171,15 @@ defmodule Prism.Config do
   @doc "Broadway processor concurrency for fanout lanes"
   def broadway_concurrency, do: Application.get_env(:prism, :broadway_concurrency, 50)
 
+  @doc "Broadway processor max_demand — messages fetched per XREADGROUP round-trip"
+  def broadway_max_demand, do: Application.get_env(:prism, :broadway_max_demand, 50)
+
+  @doc "Broadway processor min_demand — triggers refill before processors drain fully"
+  def broadway_min_demand, do: Application.get_env(:prism, :broadway_min_demand, 5)
+
+  @doc "Number of parallel FanoutBroadway producer instances (each owns its own Redis connection)"
+  def fanout_producer_count, do: Application.get_env(:prism, :fanout_producer_count, 3)
+
   @doc "Broadway processor concurrency for retry lane"
   def retry_broadway_concurrency,
     do: Application.get_env(:prism, :retry_broadway_concurrency, 10)

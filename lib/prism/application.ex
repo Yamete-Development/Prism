@@ -108,10 +108,19 @@ defmodule Prism.Application do
           {Prism.DelayedScheduler, []},
           {Prism.SchemaRegistry, []},
           {Prism.StreamTrimmer, []},
-          Supervisor.child_spec(
-            {Prism.FanoutBroadway, [name: Prism.FanoutBroadway.Jobs, lane: :jobs]},
-            id: :fanout_broadway_jobs
-          ),
+          # Spawn N parallel FanoutBroadway producers to parallelize XREADGROUP fetches.
+          # Each instance owns its own Redix connection; they share the consumer group
+          # so Redis distributes messages across them.
+        ] ++
+        (for i <- 0..(Prism.Config.fanout_producer_count() - 1) do
+           name = Module.concat(Prism.FanoutBroadway, :"Jobs_#{i}")
+
+           Supervisor.child_spec(
+             {Prism.FanoutBroadway, [name: name, lane: :jobs]},
+             id: :"fanout_broadway_jobs_#{i}"
+           )
+         end) ++
+        [
           Supervisor.child_spec(
             {Prism.RetryBroadway, [name: Prism.RetryBroadway]},
             id: :retry_broadway
