@@ -28,6 +28,15 @@ defmodule Prism.FanoutBroadway do
               group_id: consumer_group,
               topics: [stream_key],
               receive_interval: receive_interval,
+              client_config: [
+                connect_timeout: 10_000,
+                request_timeout: 30_000
+              ],
+              group_config: [
+                session_timeout_seconds: 60,
+                heartbeat_rate_seconds: 10,
+                rebalance_timeout_seconds: 300
+              ],
               fetch_config: [max_wait_time: 100],
               offset_reset_policy: :earliest
             ]
