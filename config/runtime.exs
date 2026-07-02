@@ -18,7 +18,16 @@ config :logger, level: log_level
 redis_opts = [
   host: env!("REDIS_HOST", :string, "localhost"),
   port: env!("REDIS_PORT", :integer, 6379),
-  database: env!("REDIS_DB", :integer, 0)
+  database: env!("REDIS_DB", :integer, 0),
+  socket_opts: [
+    keepalive: true,
+    nodelay: true,
+    # Linux TCP keepalive tuning: idle 10s, interval 5s, 3 probes
+    # Prevents Cilium conntrack GC from evicting idle Redis connections.
+    {:raw, 6, 4, <<10::32-native>>},
+    {:raw, 6, 5, <<5::32-native>>},
+    {:raw, 6, 6, <<3::32-native>>}
+  ]
 ]
 
 redis_opts =

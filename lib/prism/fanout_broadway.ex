@@ -40,11 +40,11 @@ defmodule Prism.FanoutBroadway do
                 ]
               ],
               group_config: [
-                session_timeout_seconds: 60,
+                session_timeout_seconds: 30,
                 heartbeat_rate_seconds: 10,
-                rebalance_timeout_seconds: 60
+                rebalance_timeout_seconds: 30
               ],
-              fetch_config: [max_wait_time: 100],
+              fetch_config: [max_wait_time: 500],
               offset_reset_policy: :latest
             ]
           },

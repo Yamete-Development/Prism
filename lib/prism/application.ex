@@ -62,8 +62,19 @@ defmodule Prism.Application do
           %{
             id: :kafka_client,
             start:
-              {:brod, :start_link_client,
-               [Prism.EventBus.Config.kafka_brokers(), :kafka_client, []]}
+               {:brod, :start_link_client,
+                [Prism.EventBus.Config.kafka_brokers(), :kafka_client,
+                 [
+                   connect_timeout: 30_000,
+                   extra_sock_opts: [
+                     keepalive: true,
+                     nodelay: true,
+                     # Linux TCP keepalive tuning: idle 10s, interval 5s, 3 probes
+                     {:raw, 6, 4, <<10::32-native>>},
+                     {:raw, 6, 5, <<5::32-native>>},
+                     {:raw, 6, 6, <<3::32-native>>}
+                   ]
+                 ]]}
           }
         ]
       else
