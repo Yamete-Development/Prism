@@ -34,7 +34,7 @@ defmodule Prism.FanoutBroadway do
                 rebalance_timeout_seconds: 300
               ],
               fetch_config: [max_wait_time: 100],
-              offset_reset_policy: :earliest
+              offset_reset_policy: :latest
             ]
           },
           concurrency: 5
