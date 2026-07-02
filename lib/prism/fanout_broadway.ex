@@ -31,7 +31,7 @@ defmodule Prism.FanoutBroadway do
               offset_commit_on_ack: false,
               shared_client: true,
               group_config: [
-                session_timeout_seconds: 60,
+                session_timeout_seconds: 300,
                 heartbeat_rate_seconds: 10,
                 rebalance_timeout_seconds: 300
               ],
