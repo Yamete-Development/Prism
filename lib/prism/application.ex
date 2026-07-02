@@ -73,6 +73,13 @@ defmodule Prism.Application do
     # Initialise the lock-free async batch counter before any Broadway starts
     Prism.AsyncBatchCounter.init()
 
+    fanout_count =
+      if transport_backend == Prism.EventBus.Transport.Kafka do
+        1
+      else
+        Prism.Config.fanout_producer_count()
+      end
+
     children =
       if Node.alive?() do
         [{Cluster.Supervisor, [topologies, [name: Prism.ClusterSupervisor]]}]
@@ -115,7 +122,7 @@ defmodule Prism.Application do
           # Each instance owns its own Redix connection; they share the consumer group
           # so Redis distributes messages across them.
         ] ++
-        for i <- 0..(Prism.Config.fanout_producer_count() - 1) do
+        for i <- 0..(fanout_count - 1) do
           name = Module.concat(Prism.FanoutBroadway, :"Jobs_#{i}")
 
           Supervisor.child_spec(
