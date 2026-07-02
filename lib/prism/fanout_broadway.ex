@@ -28,7 +28,7 @@ defmodule Prism.FanoutBroadway do
               group_id: consumer_group,
               topics: [stream_key],
               receive_interval: receive_interval,
-              offset_commit_on_ack: false,
+              offset_commit_on_ack: true,
               shared_client: true,
               client_config: [
                 connect_timeout: 30_000,
