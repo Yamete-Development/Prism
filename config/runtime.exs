@@ -20,8 +20,8 @@ redis_opts = [
   port: env!("REDIS_PORT", :integer, 6379),
   database: env!("REDIS_DB", :integer, 0),
   socket_opts: [
-    keepalive: true,
-    nodelay: true,
+    {:keepalive, true},
+    {:nodelay, true},
     # Linux TCP keepalive tuning: idle 10s, interval 5s, 3 probes
     # Prevents Cilium conntrack GC from evicting idle Redis connections.
     {:raw, 6, 4, <<10::32-native>>},
@@ -53,7 +53,8 @@ if config_env() != :test do
     consumer_group: env!("PRISM_CONSUMER_GROUP", :string, "prism:cg:fanout"),
     delayed_zset_key: env!("PRISM_DELAYED_ZSET_KEY", :string, "prism:delayed"),
     pubsub_channel: env!("PRISM_PUBSUB_CHANNEL", :string, "prism:wakeup"),
-    delayed_scheduler_error_retry_ms: env!("PRISM_DELAYED_SCHEDULER_ERROR_RETRY_MS", :integer, 5000),
+    delayed_scheduler_error_retry_ms:
+      env!("PRISM_DELAYED_SCHEDULER_ERROR_RETRY_MS", :integer, 5000),
     broadway_concurrency: env!("PRISM_BROADWAY_CONCURRENCY", :integer, 50),
     broadway_max_demand: env!("PRISM_BROADWAY_MAX_DEMAND", :integer, 50),
     broadway_min_demand: env!("PRISM_BROADWAY_MIN_DEMAND", :integer, 5),
@@ -66,11 +67,13 @@ if config_env() != :test do
     task_timeout_ms: env!("PRISM_TASK_TIMEOUT_MS", :integer, 60000),
     max_async_batches: env!("PRISM_MAX_ASYNC_BATCHES", :integer, 300),
     backpressure_enabled: env!("PRISM_BACKPRESSURE_ENABLED", :boolean, true),
-    backpressure_max_backoff_ms: env!("PRISM_BACKPRESSURE_MAX_BACKOFF_MS", :integer, 600000),
+    backpressure_max_backoff_ms: env!("PRISM_BACKPRESSURE_MAX_BACKOFF_MS", :integer, 600_000),
     backpressure_min_cooldown_ms: env!("PRISM_BACKPRESSURE_MIN_COOLDOWN_MS", :integer, 60000),
-    invalid_request_window_ms: env!("PRISM_INVALID_REQUEST_WINDOW_MS", :integer, 600000),
-    invalid_request_backpressure_threshold: env!("PRISM_INVALID_REQUEST_BACKPRESSURE_THRESHOLD", :integer, 9500),
-    invalid_request_critical_threshold: env!("PRISM_INVALID_REQUEST_CRITICAL_THRESHOLD", :integer, 10000),
+    invalid_request_window_ms: env!("PRISM_INVALID_REQUEST_WINDOW_MS", :integer, 600_000),
+    invalid_request_backpressure_threshold:
+      env!("PRISM_INVALID_REQUEST_BACKPRESSURE_THRESHOLD", :integer, 9500),
+    invalid_request_critical_threshold:
+      env!("PRISM_INVALID_REQUEST_CRITICAL_THRESHOLD", :integer, 10000),
     bucket_hash_ttl_seconds: env!("PRISM_BUCKET_HASH_TTL_SECONDS", :integer, 3600),
     server_error_base_delay_ms: env!("PRISM_SERVER_ERROR_BASE_DELAY_MS", :integer, 2000),
     server_error_max_retries: env!("PRISM_SERVER_ERROR_MAX_RETRIES", :integer, 3),
@@ -90,12 +93,12 @@ if config_env() != :test do
     callback_include_parent_message_id: env!("PRISM_INCLUDE_PARENT_MESSAGE_ID", :boolean, false),
     reply_index_enabled: env!("PRISM_REPLY_INDEX_ENABLED", :boolean, false),
     reply_index_prefix: env!("PRISM_REPLY_INDEX_PREFIX", :string, "prism"),
-    reply_index_ttl_seconds: env!("PRISM_REPLY_INDEX_TTL_SECONDS", :integer, 604800),
+    reply_index_ttl_seconds: env!("PRISM_REPLY_INDEX_TTL_SECONDS", :integer, 604_800),
     cancel_ttl: env!("PRISM_CANCEL_TTL", :integer, 300),
     cluster_topology: env!("PRISM_CLUSTER_TOPOLOGY", :string, "prism_cluster"),
     events_stream: env!("EVENTS_STREAM", :string, "events.bus"),
     events_dlq_stream: env!("EVENTS_DLQ_STREAM", :string, "events.bus.dlq"),
-    events_stream_maxlen: env!("EVENTS_STREAM_MAXLEN", :integer, 100000),
+    events_stream_maxlen: env!("EVENTS_STREAM_MAXLEN", :integer, 100_000),
     event_source: env!("EVENT_SOURCE", :string, "/prism"),
     event_bus_max_retries: env!("EVENT_BUS_MAX_RETRIES", :integer, 3),
     event_bus_retry_backoff_base_ms: env!("EVENT_BUS_RETRY_BACKOFF_BASE_MS", :integer, 1000),
@@ -104,7 +107,8 @@ if config_env() != :test do
     event_bus_consumer_block_ms: env!("EVENT_BUS_CONSUMER_BLOCK_MS", :integer, 3000),
     event_bus_stale_claim_idle_ms: env!("EVENT_BUS_STALE_CLAIM_IDLE_MS", :integer, 30000),
     event_bus_stale_claim_interval_ms: env!("EVENT_BUS_STALE_CLAIM_INTERVAL_MS", :integer, 60000),
-    event_bus_broadcast_type: env!("EVENT_BUS_BROADCAST_TYPE", :string, "prism.broadcast.completed"),
+    event_bus_broadcast_type:
+      env!("EVENT_BUS_BROADCAST_TYPE", :string, "prism.broadcast.completed"),
     event_bus_callback_type: env!("EVENT_BUS_CALLBACK_TYPE", :string, "prism.callback"),
     schema_registry_url: env!("SCHEMA_REGISTRY_URL", :string, "http://localhost:8081"),
     kafka_brokers:

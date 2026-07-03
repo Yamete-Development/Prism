@@ -166,7 +166,10 @@ defmodule Prism.FanoutBroadway do
         action = if payload.action == "", do: "execute", else: payload.action
 
         # Payload is now a JSON string
-        discord_payload = if is_nil(payload.payload) or payload.payload == "", do: %{}, else: Jason.decode!(payload.payload)
+        discord_payload =
+          if is_nil(payload.payload) or payload.payload == "",
+            do: %{},
+            else: Jason.decode!(payload.payload)
 
         parent_message_id = payload.message_id
 

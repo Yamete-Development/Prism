@@ -580,7 +580,9 @@ defmodule Prism.DiscordWorker do
                 )
 
               {:error, :invalid_webhook} ->
-                Logger.warning("Invalid webhook error for webhook_id=#{webhook_id}, not retrying.")
+                Logger.warning(
+                  "Invalid webhook error for webhook_id=#{webhook_id}, not retrying."
+                )
 
                 Callbacks.publish_partial(
                   action,
