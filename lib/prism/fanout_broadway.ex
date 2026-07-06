@@ -32,7 +32,11 @@ defmodule Prism.FanoutBroadway do
               client_config: [
                 connect_timeout: 30_000
               ],
-              group_config: [],
+              group_config: [
+                session_timeout_seconds: 30,
+                heartbeat_rate_seconds: 10,
+                rebalance_timeout_seconds: 30
+              ],
               fetch_config: [max_wait_time: 500],
               offset_reset_policy: :latest
             ]
