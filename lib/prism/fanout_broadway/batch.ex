@@ -495,9 +495,9 @@ defmodule Prism.FanoutBroadway.Batch do
   end
 
   defp store_reply_index(parent_message_id, successes) when is_binary(parent_message_id) do
-    reply_index_prefix = Prism.Config.reply_index_prefix()
+    prism_prefix = Prism.Config.prism_prefix()
     reply_index_ttl = Integer.to_string(Prism.Config.reply_index_ttl_seconds())
-    reply_key = "#{reply_index_prefix}:reply:#{parent_message_id}"
+    reply_key = "#{prism_prefix}:targets:#{parent_message_id}"
 
     commands =
       Enum.flat_map(successes, fn success ->
@@ -509,7 +509,7 @@ defmodule Prism.FanoutBroadway.Batch do
             ["HSET", reply_key, channel_id, broadcast_id],
             [
               "SETEX",
-              "#{reply_index_prefix}:copy:#{broadcast_id}",
+              "#{prism_prefix}:origin:#{broadcast_id}",
               reply_index_ttl,
               parent_message_id
             ]

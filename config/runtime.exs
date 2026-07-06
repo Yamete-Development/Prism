@@ -92,7 +92,7 @@ if config_env() != :test do
     stream_trim_interval_ms: env!("PRISM_STREAM_TRIM_INTERVAL_MS", :integer, 30000),
     callback_include_parent_message_id: env!("PRISM_INCLUDE_PARENT_MESSAGE_ID", :boolean, false),
     reply_index_enabled: env!("PRISM_REPLY_INDEX_ENABLED", :boolean, false),
-    reply_index_prefix: env!("PRISM_REPLY_INDEX_PREFIX", :string, "prism"),
+    prism_prefix: env!("PRISM_PREFIX", :string, "prism"),
     reply_index_ttl_seconds: env!("PRISM_REPLY_INDEX_TTL_SECONDS", :integer, 604_800),
     cancel_ttl: env!("PRISM_CANCEL_TTL", :integer, 300),
     cluster_topology: env!("PRISM_CLUSTER_TOPOLOGY", :string, "prism_cluster"),

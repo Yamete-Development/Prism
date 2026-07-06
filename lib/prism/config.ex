@@ -216,7 +216,7 @@ defmodule Prism.Config do
     do: Application.get_env(:prism, :callback_include_parent_message_id, true)
 
   @doc "Reply index Redis key prefix"
-  def reply_index_prefix, do: Application.get_env(:prism, :reply_index_prefix, "prism")
+  def prism_prefix, do: Application.get_env(:prism, :prism_prefix, "prism")
 
   @doc "Reply index TTL in seconds"
   def reply_index_ttl_seconds,
