@@ -30,20 +30,9 @@ defmodule Prism.FanoutBroadway do
               receive_interval: receive_interval,
               offset_commit_on_ack: true,
               client_config: [
-                connect_timeout: 30_000,
-                extra_sock_opts: [
-                  {:keepalive, true},
-                  {:nodelay, true},
-                  {:raw, 6, 4, <<10::32-native>>},
-                  {:raw, 6, 5, <<5::32-native>>},
-                  {:raw, 6, 6, <<3::32-native>>}
-                ]
+                connect_timeout: 30_000
               ],
-              group_config: [
-                session_timeout_seconds: 30,
-                heartbeat_rate_seconds: 10,
-                rebalance_timeout_seconds: 30
-              ],
+              group_config: [],
               fetch_config: [max_wait_time: 500],
               offset_reset_policy: :latest
             ]

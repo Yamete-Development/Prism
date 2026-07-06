@@ -63,20 +63,8 @@ defmodule Prism.Application do
             id: :kafka_client,
             start:
               {:brod, :start_link_client,
-               [
-                 Prism.EventBus.Config.kafka_brokers(),
-                 :kafka_client,
-                 [
-                   connect_timeout: 30_000,
-                   extra_sock_opts: [
-                     {:keepalive, true},
-                     {:nodelay, true},
-                     {:raw, 6, 4, <<10::32-native>>},
-                     {:raw, 6, 5, <<5::32-native>>},
-                     {:raw, 6, 6, <<3::32-native>>}
-                   ]
-                 ]
-               ]}
+               [Prism.EventBus.Config.kafka_brokers(), :kafka_client,
+                [connect_timeout: 30_000]]}
           }
         ]
       else
