@@ -6,6 +6,14 @@ defmodule Prism.Config do
   providing a single source of truth for all runtime configuration.
   """
 
+  # ── Service probes ────────────────────────────────────────────────────
+
+  @doc "IP address for the health probe listener"
+  def health_host, do: Application.get_env(:prism, :health_host, {0, 0, 0, 0})
+
+  @doc "Port for liveness and readiness probes"
+  def health_port, do: Application.get_env(:prism, :health_port, 9090)
+
   # ── Redis ──────────────────────────────────────────────────────────────
 
   @doc "Redis connection options"

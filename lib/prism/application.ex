@@ -63,8 +63,11 @@ defmodule Prism.Application do
             id: :kafka_client,
             start:
               {:brod, :start_link_client,
-               [Prism.EventBus.Config.kafka_brokers(), :kafka_client,
-                [extra_sock_opts: [keepalive: true]]]}
+               [
+                 Prism.EventBus.Config.kafka_brokers(),
+                 :kafka_client,
+                 [extra_sock_opts: [keepalive: true]]
+               ]}
           }
         ]
       else
@@ -86,6 +89,11 @@ defmodule Prism.Application do
       end ++
         kafka_client_child ++
         [
+          {Bandit,
+           plug: Prism.Health,
+           scheme: :http,
+           port: Prism.Config.health_port(),
+           ip: Prism.Config.health_host()},
           {Finch,
            name: DiscordFinch,
            pools: %{

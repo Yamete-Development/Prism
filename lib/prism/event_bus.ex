@@ -2,9 +2,9 @@ defmodule Prism.EventBus do
   @moduledoc """
   Public API for the inter-service event bus.
 
-  Provides `publish` and `subscribe` primitives backed by Redis Streams,
-  with CloudEvents v1.0 envelopes, OTel trace propagation, and dead-letter
-  queue support.
+  Provides `publish` and `subscribe` primitives backed by the configured
+  transport, with CloudEvents v1.0 attributes in broker headers, OTel trace
+  propagation, and dead-letter queue support.
 
   ## Usage
 
@@ -33,8 +33,8 @@ defmodule Prism.EventBus do
   @doc """
   Publishes an event to the given stream.
 
-  Builds a CloudEvents v1.0 envelope around the provided data and XADD's
-  it to the stream.
+  Publishes the JSON data as the payload and CloudEvents v1.0 attributes as
+  transport headers.
 
   ## Options
     - `:type` (required) — CloudEvent type, e.g. `"fun.interchat.broadcast.completed"`
@@ -79,6 +79,12 @@ defmodule Prism.EventBus do
   @spec publish_cloud_event(binary(), map(), keyword()) :: :ok | {:error, term()}
   def publish_cloud_event(stream, cloud_event, opts \\ []) do
     Publisher.publish_cloud_event(stream, cloud_event, opts)
+  end
+
+  @doc "Publishes raw Protobuf with CloudEvents metadata in Kafka headers."
+  @spec publish_protobuf(binary(), struct(), keyword()) :: :ok | {:error, term()}
+  def publish_protobuf(stream, message, opts) do
+    Publisher.publish_protobuf(stream, message, opts)
   end
 
   @doc """

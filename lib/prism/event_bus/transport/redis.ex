@@ -85,10 +85,20 @@ defmodule Prism.EventBus.Transport.Redis do
            "COUNT",
            to_string(count)
          ]) do
-      {:ok, [^stream, messages]} when is_list(messages) -> to_messages(stream, messages)
-      {:ok, [^stream, []]} -> []
-      {:ok, nil} -> []
-      {:error, _reason} -> []
+      # Redis 7 adds a third list containing IDs deleted while pending. Redis
+      # 6.2 returns the first two fields only. The first field is the next scan
+      # cursor, not the stream name.
+      {:ok, [_next_cursor, messages, _deleted_ids]} when is_list(messages) ->
+        to_messages(stream, messages)
+
+      {:ok, [_next_cursor, messages]} when is_list(messages) ->
+        to_messages(stream, messages)
+
+      {:ok, nil} ->
+        []
+
+      {:error, _reason} ->
+        []
     end
   end
 
@@ -124,9 +134,6 @@ defmodule Prism.EventBus.Transport.Redis do
     |> Enum.reduce({nil, %{}}, fn
       ["payload", value], {_, headers} ->
         {value, headers}
-
-      [<<"ce_", key::binary>>, value], {payload, headers} ->
-        {payload, Map.put(headers, key, value)}
 
       [key, value], {payload, headers} ->
         {payload, Map.put(headers, key, value)}

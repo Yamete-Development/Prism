@@ -4,8 +4,6 @@ defmodule Prism.DiscordWorker.Callbacks do
   """
   alias Prism.Helpers
 
-  require Logger
-
   @doc """
   Publishes a partial (single-target) result to the callback stream.
 
@@ -49,6 +47,7 @@ defmodule Prism.DiscordWorker.Callbacks do
 
       payload = %{
         "batch_id" => batch_id,
+        "action_id" => target["polarizer_action_id"],
         "status" => "partial_retry",
         "action" => action,
         "message_ids" => successes,
@@ -56,9 +55,21 @@ defmodule Prism.DiscordWorker.Callbacks do
       }
 
       payload =
-        if parent_msg_id, do: Map.put(payload, "parent_message_id", parent_msg_id), else: payload
+        payload
+        |> then(fn value ->
+          if parent_msg_id, do: Map.put(value, "parent_message_id", parent_msg_id), else: value
+        end)
+        |> Map.reject(fn {_key, value} -> is_nil(value) end)
 
       Helpers.publish_callback(payload)
+
+      if is_nil(error_reason) do
+        Helpers.publish_delivery_callback(
+          target["polarizer_action_id"],
+          parent_msg_id,
+          :MESSAGE_STATE_ACTIVE
+        )
+      end
     end
   end
 end

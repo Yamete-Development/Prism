@@ -64,7 +64,11 @@ defmodule Prism.DiscordWorker do
             end
           end
 
-        checkpoint_key = Helpers.checkpoint_key(action, batch_id, webhook_id)
+        polarizer_action_id = Map.get(target, "polarizer_action_id")
+
+        checkpoint_key =
+          Helpers.checkpoint_key(action, batch_id, webhook_id, polarizer_action_id)
+
         method_str = Helpers.action_to_method_string(action)
 
         cached_result =
@@ -202,7 +206,14 @@ defmodule Prism.DiscordWorker do
                       )
                     end
 
-                    write_checkpoint(skip_checkpoint_write, batch_id, action, webhook_id, result)
+                    write_checkpoint(
+                      skip_checkpoint_write,
+                      batch_id,
+                      action,
+                      webhook_id,
+                      polarizer_action_id,
+                      result
+                    )
 
                     case result do
                       {:error, {:rate_limited, delay_ms}} ->
@@ -629,6 +640,7 @@ defmodule Prism.DiscordWorker do
                   batch_id,
                   action,
                   webhook_id,
+                  Map.get(target, "polarizer_action_id"),
                   {:ok, msg_id}
                 )
 
@@ -647,9 +659,11 @@ defmodule Prism.DiscordWorker do
     end
   end
 
-  defp write_checkpoint(skip?, batch_id, action, webhook_id, result) do
+  defp write_checkpoint(skip?, batch_id, action, webhook_id, polarizer_action_id, result) do
     if batch_id && not skip? do
-      checkpoint_key = Helpers.checkpoint_key(action, batch_id, webhook_id)
+      checkpoint_key =
+        Helpers.checkpoint_key(action, batch_id, webhook_id, polarizer_action_id)
+
       checkpoint_ttl = to_string(Prism.Config.checkpoint_ttl_seconds())
 
       case result do

@@ -1,7 +1,14 @@
 import Config
 import Dotenvy
 
-Dotenvy.source!([".env", ".env.local", System.get_env()])
+dotenv_sources =
+  if config_env() == :test do
+    [System.get_env()]
+  else
+    [".env", ".env.local", System.get_env()]
+  end
+
+Dotenvy.source!(dotenv_sources)
 
 log_level =
   case String.downcase(env!("LOG_LEVEL", :string, "info")) do
@@ -15,32 +22,44 @@ log_level =
 
 config :logger, level: log_level
 
-redis_opts = [
-  host: env!("REDIS_HOST", :string, "localhost"),
-  port: env!("REDIS_PORT", :integer, 6379),
-  database: env!("REDIS_DB", :integer, 0),
-  socket_opts: [
-    {:keepalive, true},
-    {:nodelay, true},
-    # Linux TCP keepalive tuning: idle 10s, interval 5s, 3 probes
-    # Prevents Cilium conntrack GC from evicting idle Redis connections.
-    {:raw, 6, 4, <<10::32-native>>},
-    {:raw, 6, 5, <<5::32-native>>},
-    {:raw, 6, 6, <<3::32-native>>}
+if config_env() != :test do
+  redis_opts = [
+    host: env!("REDIS_HOST", :string, "localhost"),
+    port: env!("REDIS_PORT", :integer, 6379),
+    database: env!("REDIS_DB", :integer, 0),
+    socket_opts: [
+      {:keepalive, true},
+      {:nodelay, true},
+      # Linux TCP keepalive tuning: idle 10s, interval 5s, 3 probes
+      # Prevents Cilium conntrack GC from evicting idle Redis connections.
+      {:raw, 6, 4, <<10::32-native>>},
+      {:raw, 6, 5, <<5::32-native>>},
+      {:raw, 6, 6, <<3::32-native>>}
+    ]
   ]
-]
 
-redis_opts =
-  if redis_password = env!("REDIS_PASSWORD", :string, nil) do
-    Keyword.put(redis_opts, :password, redis_password)
-  else
-    redis_opts
-  end
+  redis_opts =
+    if redis_password = env!("REDIS_PASSWORD", :string, nil) do
+      Keyword.put(redis_opts, :password, redis_password)
+    else
+      redis_opts
+    end
 
-config :prism, redis_opts: redis_opts
+  config :prism, redis_opts: redis_opts
+end
 
 if config_env() != :test do
+  health_host =
+    case env!("PRISM_HEALTH_HOST", :string, "0.0.0.0")
+         |> String.to_charlist()
+         |> :inet.parse_address() do
+      {:ok, address} -> address
+      {:error, reason} -> raise "invalid PRISM_HEALTH_HOST: #{inspect(reason)}"
+    end
+
   config :prism,
+    health_host: health_host,
+    health_port: env!("PRISM_HEALTH_PORT", :integer, 9090),
     redix_pool_size: env!("PRISM_REDIX_POOL_SIZE", :integer, 5),
     finch_pool_count: env!("PRISM_FINCH_POOL_COUNT", :integer, 50),
     finch_receive_timeout_ms: env!("PRISM_FINCH_RECEIVE_TIMEOUT_MS", :integer, 30000),
@@ -110,6 +129,12 @@ if config_env() != :test do
     event_bus_broadcast_type:
       env!("EVENT_BUS_BROADCAST_TYPE", :string, "prism.broadcast.completed"),
     event_bus_callback_type: env!("EVENT_BUS_CALLBACK_TYPE", :string, "prism.callback"),
+    delivery_topic: env!("PRISM_DELIVERY_TOPIC", :string, "events.prism.delivery.v2"),
+    prism_job_source: env!("PRISM_JOB_SOURCE", :string, "/polarizer"),
+    prism_job_event_type: env!("PRISM_JOB_EVENT_TYPE", :string, "fun.interchat.prism.job"),
+    prism_jobs_dlq_topic: env!("PRISM_JOBS_DLQ_TOPIC", :string, "prism.stream.jobs.dlq"),
+    prism_jobs_retry_topic: env!("PRISM_JOBS_RETRY_TOPIC", :string, "prism.stream.jobs.retry"),
+    prism_handoff_retry_base_ms: env!("PRISM_HANDOFF_RETRY_BASE_MS", :integer, 100),
     schema_registry_url: env!("SCHEMA_REGISTRY_URL", :string, "http://localhost:8081"),
     kafka_brokers:
       env!("KAFKA_BROKERS", :string, "localhost:9092")
@@ -123,10 +148,12 @@ if config_env() != :test do
       end)
 
   event_bus_transport =
-    case String.downcase(env!("EVENT_BUS_TRANSPORT", :string, "redis")) do
-      "redis" -> Prism.EventBus.Transport.Redis
-      "kafka" -> Module.concat(["Prism.EventBus.Transport.Kafka"])
-      other -> Module.concat([other])
+    case String.downcase(env!("EVENT_BUS_TRANSPORT", :string, "kafka")) do
+      "kafka" ->
+        Module.concat(["Prism.EventBus.Transport.Kafka"])
+
+      other ->
+        raise "EVENT_BUS_TRANSPORT must be kafka in production, got: #{inspect(other)}"
     end
 
   config :prism, event_bus_transport_backend: event_bus_transport

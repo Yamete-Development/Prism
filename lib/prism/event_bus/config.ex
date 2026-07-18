@@ -52,9 +52,32 @@ defmodule Prism.EventBus.Config do
   def callback_event_type,
     do: Application.get_env(:prism, :event_bus_callback_type, "prism.callback")
 
-  @doc "Transport backend module (default: Prism.EventBus.Transport.Redis)"
+  @doc "Binary Protobuf topic for authoritative Polarizer delivery receipts"
+  def delivery_topic,
+    do: Application.get_env(:prism, :delivery_topic, "events.prism.delivery.v2")
+
+  @doc "Required CloudEvents source on authoritative Prism jobs"
+  def prism_job_source, do: Application.get_env(:prism, :prism_job_source, "/polarizer")
+
+  @doc "Required CloudEvents type on authoritative Prism jobs"
+  def prism_job_event_type,
+    do: Application.get_env(:prism, :prism_job_event_type, "fun.interchat.prism.job")
+
+  @doc "Restricted Kafka topic for invalid Prism jobs"
+  def prism_jobs_dlq_topic,
+    do: Application.get_env(:prism, :prism_jobs_dlq_topic, "prism.stream.jobs.dlq")
+
+  @doc "Durable Kafka topic for retryable Prism jobs"
+  def prism_jobs_retry_topic,
+    do: Application.get_env(:prism, :prism_jobs_retry_topic, "prism.stream.jobs.retry")
+
+  @doc "Initial backoff for mandatory Kafka retry/DLQ handoffs"
+  def prism_handoff_retry_base_ms,
+    do: Application.get_env(:prism, :prism_handoff_retry_base_ms, 100)
+
+  @doc "Transport backend module (production default: Prism.EventBus.Transport.Kafka)"
   def transport_backend,
-    do: Application.get_env(:prism, :event_bus_transport_backend, Prism.EventBus.Transport.Redis)
+    do: Application.get_env(:prism, :event_bus_transport_backend, Prism.EventBus.Transport.Kafka)
 
   @doc "Kafka brokers list for brod"
   def kafka_brokers, do: Application.get_env(:prism, :kafka_brokers, [{"localhost", 9092}])

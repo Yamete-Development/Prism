@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package interchat.trust_and_safety.v2;
+
+import "google/protobuf/timestamp.proto";
+
+// Delivery-only projection of the canonical trust_and_safety/v2/events.proto.
+enum MessageState {
+  MESSAGE_STATE_UNSPECIFIED = 0;
+  MESSAGE_STATE_PENDING_MODERATION = 1;
+  MESSAGE_STATE_APPROVED_PENDING_DELIVERY = 2;
+  MESSAGE_STATE_ACTIVE = 3;
+  MESSAGE_STATE_BLOCKED = 4;
+  MESSAGE_STATE_HELD = 5;
+  MESSAGE_STATE_EXPIRED = 6;
+  MESSAGE_STATE_DELIVERY_FAILED = 7;
+}
+
+message PrismDeliveryCallback {
+  string action_id = 1;
+  string message_id = 2;
+  MessageState state = 3;
+  string failure_code = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+}

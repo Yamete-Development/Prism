@@ -3,14 +3,15 @@ defmodule Prism.EventBus.Transport.Kafka do
 
   @impl true
   def publish(stream, payload, _maxlen, headers) do
-    # Ensure a producer is started for this topic (idempotent; ignores {:error, {:already_started, _}})
-    # We use required_acks: 1 to prevent request_timed_out if Kafka replicas are lagging or offline.
-    _ = :brod.start_producer(:kafka_client, stream, required_acks: 1)
+    # Ensure a producer is started for this topic (idempotent; ignores {:error, {:already_started, _}}).
+    _ = :brod.start_producer(:kafka_client, stream, required_acks: -1)
 
+    {partition_key, headers} = Map.pop(headers, "partition-key", "")
     kafka_headers = Enum.map(headers, fn {k, v} -> {to_string(k), to_string(v)} end)
-    batch = [%{key: "", value: payload, headers: kafka_headers}]
+    batch = [%{key: partition_key, value: payload, headers: kafka_headers}]
+    partitioner = if partition_key == "", do: :random, else: :hash
 
-    case :brod.produce_sync(:kafka_client, stream, 0, "", batch) do
+    case :brod.produce_sync(:kafka_client, stream, partitioner, partition_key, batch) do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
     end

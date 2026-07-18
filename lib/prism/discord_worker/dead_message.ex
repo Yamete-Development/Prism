@@ -7,8 +7,6 @@ defmodule Prism.DiscordWorker.DeadMessage do
   """
   alias Prism.Helpers
 
-  require Logger
-
   @doc """
   Returns `true` if the message is known to be dead (deleted on Discord).
 

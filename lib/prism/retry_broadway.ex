@@ -50,18 +50,21 @@ defmodule Prism.RetryBroadway do
       [_id, fields] = data
       payload_json = Helpers.get_payload_from_redis_data(fields)
 
-      with {:ok, raw} <- Jason.decode(payload_json) do
-        Helpers.re_enqueue_on_backpressure(raw, "-Retry", delay_ms)
-      else
-        _ ->
-          Logger.error(
-            "Failed to parse retry payload during backpressure: #{inspect(payload_json)}"
-          )
+      result =
+        with {:ok, raw} <- Jason.decode(payload_json),
+             :ok <- Helpers.re_enqueue_on_backpressure(raw, "-Retry", delay_ms) do
+          message
+        else
+          {:error, reason} ->
+            Logger.error("Failed to durably re-enqueue retry: #{inspect(reason)}")
+            Message.failed(message, {:retry_enqueue_failed, reason})
 
-          Message.failed(message, "invalid payload during backpressure")
-      end
+          _ ->
+            Logger.error("Failed to parse retry payload during backpressure")
+            Message.failed(message, :invalid_payload_during_backpressure)
+        end
 
-      message
+      result
     else
       polled_at = :os.system_time(:millisecond)
       [id, fields] = data
@@ -72,12 +75,14 @@ defmodule Prism.RetryBroadway do
       case Jason.decode(payload_json) do
         {:ok, payload} ->
           if Map.has_key?(payload, "targets") or Map.get(payload, "type") == "protobuf_batch" do
-            route_batch_to_fanout(payload, payload_json)
+            case route_batch_to_fanout(payload, payload_json) do
+              :ok -> message
+              {:error, reason} -> Message.failed(message, {:fanout_republish_failed, reason})
+            end
           else
             Prism.DiscordWorker.process_retry(payload, polled_at, enqueued_at)
+            message
           end
-
-          message
 
         _ ->
           Logger.error("Failed to parse retry payload: #{inspect(payload_json)}")
@@ -92,8 +97,13 @@ defmodule Prism.RetryBroadway do
       Logger.info("[RetryBroadway] Routing protobuf batch back to jobs stream #{stream_key}")
 
       bytes = Base.decode64!(Map.fetch!(payload, "bytes"))
+      headers = Map.get(payload, "headers", %{})
+      partition_key = Map.get(payload, "partition_key", "")
 
-      case Prism.EventBus.Publisher.publish_raw(stream_key, bytes) do
+      case Prism.EventBus.Publisher.publish_raw(stream_key, bytes,
+             headers: headers,
+             key: partition_key
+           ) do
         :ok ->
           :ok
 
@@ -101,6 +111,8 @@ defmodule Prism.RetryBroadway do
           Logger.error(
             "[RetryBroadway] Failed to publish protobuf batch to #{stream_key}: #{inspect(reason)}"
           )
+
+          {:error, reason}
       end
     else
       targets = Map.get(payload, "targets", [])
@@ -121,6 +133,8 @@ defmodule Prism.RetryBroadway do
           Logger.error(
             "[RetryBroadway] Failed to publish batch #{batch_id} to #{stream_key}: #{inspect(reason)}"
           )
+
+          {:error, reason}
       end
     end
   end

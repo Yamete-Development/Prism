@@ -4,7 +4,6 @@ defmodule Prism.EventBus.Telemetry do
   Provides :telemetry event emission and OpenTelemetry span management.
   """
 
-  require Logger
   require OpenTelemetry.Tracer
 
   @doc """

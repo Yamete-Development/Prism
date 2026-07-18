@@ -249,7 +249,15 @@ defmodule Prism.FanoutBroadway.Batch do
               end
 
             webhook_id = item.webhook_id
-            ck = Helpers.checkpoint_key(action, batch_id, webhook_id)
+
+            ck =
+              Helpers.checkpoint_key(
+                action,
+                batch_id,
+                webhook_id,
+                Map.get(item.target, "polarizer_action_id")
+              )
+
             ["SETEX", ck, checkpoint_ttl, ck_result]
           end)
 
@@ -337,8 +345,14 @@ defmodule Prism.FanoutBroadway.Batch do
         store_reply_index(parent_message_id, successes)
       end
 
+      polarizer_action_id =
+        targets
+        |> List.first(%{})
+        |> Map.get("polarizer_action_id")
+
       payload_map = %{
         batch_id: batch_id,
+        action_id: polarizer_action_id,
         status: "success",
         action: action,
         message_ids: Enum.reverse(successes),
@@ -346,13 +360,34 @@ defmodule Prism.FanoutBroadway.Batch do
       }
 
       payload_map =
-        if include_parent_message_id and parent_message_id do
+        if parent_message_id and (include_parent_message_id or not is_nil(polarizer_action_id)) do
           Map.put(payload_map, :parent_message_id, parent_message_id)
         else
           payload_map
         end
 
       Helpers.publish_callback(payload_map)
+
+      delivery_result =
+        if ok_count > 0 do
+          Helpers.publish_delivery_callback(
+            polarizer_action_id,
+            parent_message_id,
+            :MESSAGE_STATE_ACTIVE
+          )
+        else
+          Helpers.publish_delivery_callback(
+            polarizer_action_id,
+            parent_message_id,
+            :MESSAGE_STATE_DELIVERY_FAILED,
+            "NO_TARGET_DELIVERED"
+          )
+        end
+
+      case delivery_result do
+        :ok -> :ok
+        {:error, reason} -> raise "authoritative delivery callback failed: #{inspect(reason)}"
+      end
 
       events_stream = Prism.EventBus.Config.events_stream()
       Logger.debug("Published callback to #{events_stream} for batch #{batch_id}#{parent_log}")

@@ -105,9 +105,11 @@ defmodule Prism.Helpers do
   Builds a Redis checkpoint key from batch metadata.
    Format: `prism:ck:<action>:<batch_id>:<webhook_id>`
   """
-  @spec checkpoint_key(String.t(), String.t(), String.t()) :: String.t()
-  def checkpoint_key(action, batch_id, webhook_id),
-    do: "prism:ck:#{action}:#{batch_id}:#{webhook_id}"
+  @spec checkpoint_key(String.t(), String.t(), String.t(), String.t() | nil) :: String.t()
+  def checkpoint_key(action, batch_id, webhook_id, polarizer_action_id \\ nil) do
+    delivery_id = polarizer_action_id || action
+    "prism:ck:#{delivery_id}:#{batch_id}:#{webhook_id}"
+  end
 
   # ── Shared backpressure re-enqueue ────────────────────────────────────
 
@@ -178,6 +180,59 @@ defmodule Prism.Helpers do
     type = Prism.EventBus.Config.callback_event_type()
 
     Prism.EventBus.publish(events_stream, type: type, data: payload_map)
+  end
+
+  @doc "Publishes an authoritative delivery state for a Polarizer-approved message."
+  def publish_delivery_callback(action_id, message_id, state, failure_code \\ "")
+
+  def publish_delivery_callback(action_id, message_id, state, failure_code)
+      when is_binary(action_id) and action_id != "" do
+    now_ns = System.system_time(:nanosecond)
+
+    callback = %Interchat.TrustAndSafety.V2.PrismDeliveryCallback{
+      action_id: action_id,
+      message_id: message_id || "",
+      state: state,
+      failure_code: failure_code,
+      occurred_at: %Google.Protobuf.Timestamp{
+        seconds: div(now_ns, 1_000_000_000),
+        nanos: rem(now_ns, 1_000_000_000)
+      }
+    }
+
+    publish_delivery_attempt(callback, action_id, 1)
+  end
+
+  def publish_delivery_callback(_action_id, _message_id, _state, _failure_code), do: :ok
+
+  defp publish_delivery_attempt(callback, action_id, attempt) do
+    result =
+      Prism.EventBus.publish_protobuf(
+        Prism.EventBus.Config.delivery_topic(),
+        callback,
+        type: "interchat.prism.delivery.v2",
+        source: "/prism",
+        key: action_id
+      )
+
+    case result do
+      :ok ->
+        :ok
+
+      {:ok, _id} ->
+        :ok
+
+      {:error, _reason} when attempt < 3 ->
+        Process.sleep(50 * attempt)
+        publish_delivery_attempt(callback, action_id, attempt + 1)
+
+      {:error, reason} ->
+        Logger.error(
+          "Failed to publish Polarizer delivery callback action_id=#{action_id}: #{inspect(reason)}"
+        )
+
+        {:error, reason}
+    end
   end
 
   # ── Overrides merge ─────────────────────────────────────────────────────

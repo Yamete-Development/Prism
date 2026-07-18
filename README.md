@@ -1,26 +1,26 @@
 # Prism — A High-Performance Discord Webhook Router
 
-Prism is a high-performance, asynchronous worker pool written in Elixir. It acts as a fast pipe for routing webhook requests to Discord at scale.
+Prism is a high-performance, asynchronous worker pool written in Elixir. Polarizer is its only production message producer; Prism delivers approved binary-Protobuf jobs to Discord at scale.
 
-Instead of managing HTTP request loops, retries, and rate limits within your main application, you enqueue Protobuf payloads to an EventBus (Redis Streams or Kafka). Prism pulls these batches, fans them out concurrently, handles all Discord HTTP `429 Too Many Requests` backpressure automatically, and publishes a JSON summary callback (CloudEvent) via EventBus when the batch is finished.
+Polarizer publishes raw `PrismStreamPayload` values to Kafka topic `prism.stream.jobs`, with CloudEvents metadata in Kafka headers. Prism validates the topic, partition key, producer source, event type, content type, and action/batch/message identity before delivery. It publishes typed delivery receipts to `events.prism.delivery.v2`; JSON summaries are observational only. Redis is used internally for delayed retries, rate limits, checkpoints, and caches, never as the production ingress authority.
 
 Prism is entirely payload-agnostic. It does not enforce any specific Discord formatting rules, making it a general-purpose tool for any Discord bot or application that needs to broadcast messages to hundreds or thousands of webhooks quickly.
 
 ## Architecture
 
-This worker uses **Broadway** to process Redis Stream messages concurrently, with **Finch** providing high-performance HTTP pooling.
+This worker uses **Broadway Kafka** to process approved jobs concurrently, with **Finch** providing high-performance HTTP pooling.
 
 ### Key Features
 - **Unbounded Fan-out:** Group requests into batches; Prism concurrently dispatches up to 80 targets per batch (configurable).
 - **Smart Retries & Backpressure:** Automatically intercepts Discord's `429` rate limit responses, reads the `retry_after` header, and spawns background tasks to complete the request without blocking the main pipeline.
 - **Target Overrides:** Efficiently send the exact same base payload to most targets, while providing a target-specific `overrides` dictionary that Prism will merge on the fly.
-- **Callback System:** Emits real-time event summaries (successes vs. permanent/transient failures) back to a Redis Stream so your main application can delete dead webhooks from its database.
+- **Callback System:** Emits typed delivery state to Polarizer and separate observational batch summaries.
 - **Configurable Everything:** All thresholds, delays, stream keys, pool sizes, and feature gates are configurable via environment variables. See `.env.example` for the full list.
 - **Feature Gates:** Dead message cache, key expansion, cancel checker, and stream trimmer can all be disabled independently.
 
 ## Integration Contract
 
-Prism communicates purely over EventBus using JSON payloads wrapped in CloudEvents. For the complete schema detailing how to enqueue tasks and consume callbacks, see [CONTRACT.md](CONTRACT.md).
+Prism consumes and produces raw binary Protobuf over Kafka. CloudEvents metadata is carried in Kafka headers; Discord request bodies remain JSON inside the Protobuf payload. See [CONTRACT.md](CONTRACT.md).
 
 ## Configuration
 
@@ -37,9 +37,19 @@ cp .env.example .env
 | `REDIS_HOST` | Redis hostname | `localhost` |
 | `REDIS_PORT` | Redis port | `6379` |
 | `PRISM_STREAM_JOBS` | Jobs lane stream topic/key | `prism.stream.jobs` |
-| `EVENT_BUS_TRANSPORT` | Transport backend | `redis` or `kafka` |
+| `EVENT_BUS_TRANSPORT` | Production transport (must be `kafka`) | `kafka` |
 | `KAFKA_BROKERS` | Comma-separated Kafka brokers | `localhost:9092` |
 | `PRISM_CONSUMER_GROUP` | Consumer group name | `prism:cg:fanout` |
+| `PRISM_JOB_SOURCE` | Required `ce_source` job header | `/polarizer` |
+| `PRISM_JOB_EVENT_TYPE` | Required `ce_type` job header | `fun.interchat.prism.job` |
+| `PRISM_JOBS_DLQ_TOPIC` | Restricted invalid-job topic | `prism.stream.jobs.dlq` |
+| `PRISM_JOBS_RETRY_TOPIC` | Durable approved-job retry topic | `prism.stream.jobs.retry` |
+| `PRISM_HANDOFF_RETRY_BASE_MS` | Initial mandatory Kafka-handoff retry delay | `100` |
+| `PRISM_HEALTH_PORT` | `/live` and `/ready` probe port | `9090` |
+
+`/live` proves the BEAM can respond. `/ready` fails closed until the Prism
+supervisor, Kafka client, Redis PubSub connection, and every configured fanout
+consumer and retry consumer are running.
 
 ### Performance Tuning
 

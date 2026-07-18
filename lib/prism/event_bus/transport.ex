@@ -2,7 +2,7 @@ defmodule Prism.EventBus.Transport do
   @moduledoc """
   Transport facade for the EventBus adapter.
 
-  Delegates to the configured backend module (default: `Transport.Redis`).
+  Delegates to the configured backend module (production default: `Transport.Kafka`).
   Set `EVENT_BUS_TRANSPORT` or the application env key
   `:prism, [:event_bus, :transport_backend]` to swap backends.
 
@@ -17,11 +17,11 @@ defmodule Prism.EventBus.Transport do
   """
 
   @doc """
-  Publishes a JSON-encoded event to a stream with approximate length capping.
+  Publishes an opaque payload plus broker headers.
   """
   @spec publish(binary(), binary(), pos_integer(), map()) :: :ok | {:error, term()}
-  def publish(stream, json_payload, maxlen, headers \\ %{}) do
-    backend().publish(stream, json_payload, maxlen, headers)
+  def publish(stream, payload, maxlen, headers \\ %{}) do
+    backend().publish(stream, payload, maxlen, headers)
   end
 
   @doc """

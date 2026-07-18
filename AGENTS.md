@@ -6,7 +6,7 @@ This document is the specialized guide for agents working on the Elixir-based we
 
 ## Service Architecture
 
-Prism is an OTP application built in Elixir that consumes payload batches from an EventBus (Redis Streams or Kafka) and dispatches them concurrently via Finch HTTP clients to Discord's webhooks.
+Prism is an OTP application built in Elixir that consumes Polarizer-approved binary Protobuf payloads from Kafka and dispatches them concurrently via Finch HTTP clients to Discord's webhooks. Redis remains an internal retry/rate-limit/cache dependency.
 
 ```
 Prism/
@@ -72,8 +72,10 @@ Key config categories:
 
 Prism runs Broadway pipelines to consume batches concurrently:
 
-1. **Jobs Lane (default `prism.stream.jobs`):** The unified fanout stream fed by the main bot (consumed via Redis Streams or Kafka).
+1. **Jobs Lane (default `prism.stream.jobs`):** The authoritative Kafka topic written by Polarizer after policy approval.
 2. **Retry Lane (default `discord:fanout:stream:retries`):** Dedicated stream fed by the delayed scheduler for failed webhooks. (Always uses Redis Streams, as it's an internal delayed queue implementation.)
+
+Whole approved-job retries use the durable Kafka topic `prism.stream.jobs.retry`; the Redis retry lane is limited to per-target scheduling and is never the only retained copy of an acknowledged Kafka job.
 
 All lane parameters (concurrency, receive intervals) are configurable via `Prism.Config`.
 
@@ -188,4 +190,3 @@ Shared utilities consumed across the codebase:
 - `process_batch/10` — `Task.async_stream` fan-out, success/failure aggregation
 - `spawn_async_batch/10` — `Task.Supervisor` async spawning with crash recovery
 - `store_reply_index/2` — Redis reply index storage
-

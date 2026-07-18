@@ -53,25 +53,19 @@ defmodule Prism.EventBusTest do
 
       [[_id, fields]] = Redix.command!(redix_conn, ["XRANGE", stream, "-", "+"])
 
-      payload =
-        fields
-        |> Enum.chunk_every(2)
-        |> Enum.find_value(fn
-          ["payload", val] -> val
-          _ -> nil
-        end)
+      stored = stream_fields(fields)
+      payload = stored["payload"]
 
       assert payload != nil
-      envelope = Jason.decode!(payload)
+      data = Jason.decode!(payload)
 
-      assert envelope["specversion"] == "1.0"
-      assert envelope["type"] == "fun.interchat.test.event"
-      assert envelope["source"] == "/prism-test"
-      assert envelope["datacontenttype"] == "application/json"
-      assert envelope["data"] == %{"test" => true, "value" => 42}
-      assert is_binary(envelope["id"])
-      assert String.starts_with?(envelope["id"], "evt_")
-      assert is_binary(envelope["time"])
+      assert stored["ce_specversion"] == "1.0"
+      assert stored["ce_type"] == "fun.interchat.test.event"
+      assert stored["ce_source"] == "/prism-test"
+      assert stored["ce_datacontenttype"] == "application/json"
+      assert data == %{"test" => true, "value" => 42}
+      assert String.starts_with?(stored["ce_id"], "evt_")
+      assert is_binary(stored["ce_time"])
     end
 
     test "builds envelope with correct ID format" do
@@ -106,17 +100,9 @@ defmodule Prism.EventBusTest do
 
       [[_id, fields]] = Redix.command!(redix_conn, ["XRANGE", stream, "-", "+"])
 
-      payload =
-        fields
-        |> Enum.chunk_every(2)
-        |> Enum.find_value(fn
-          ["payload", val] -> val
-          _ -> nil
-        end)
-
-      decoded = Jason.decode!(payload)
-      assert decoded["type"] == "fun.interchat.test.forwarded"
-      assert decoded["data"] == %{"forwarded" => true}
+      stored = stream_fields(fields)
+      assert stored["ce_type"] == "fun.interchat.test.forwarded"
+      assert Jason.decode!(stored["payload"]) == %{"forwarded" => true}
     end
   end
 
@@ -319,6 +305,27 @@ defmodule Prism.EventBusTest do
     end
   end
 
+  describe "Redis 7 stale recovery" do
+    test "accepts the three-element XAUTOCLAIM response", %{stream: stream} do
+      group = "#{@consumer_group}-autoclaim"
+      transport = Prism.EventBus.Transport.Redis
+
+      assert {:ok, _} = transport.create_consumer_group(stream, group)
+
+      assert :ok =
+               EventBus.publish(stream,
+                 type: "fun.interchat.test.claim",
+                 data: %{recover: true}
+               )
+
+      assert {:ok, [original]} = transport.read_batch(stream, group, "consumer-a", 1, 1)
+      assert [claimed] = transport.claim_stale(stream, group, "consumer-b", 0, 1)
+      assert claimed.id == original.id
+      assert claimed.data == original.data
+      assert claimed.headers["ce_type"] == "fun.interchat.test.claim"
+    end
+  end
+
   # ── Broadcast Completed Event Data Match ───────────────────────────────
 
   describe "broadcast completed event format" do
@@ -344,5 +351,11 @@ defmodule Prism.EventBusTest do
       assert cloud_event["data"]["hub_id"] == "hub_abc123"
       assert cloud_event["data"]["timestamp"] == 1_719_202_374_000
     end
+  end
+
+  defp stream_fields(fields) do
+    fields
+    |> Enum.chunk_every(2)
+    |> Map.new(fn [key, value] -> {key, value} end)
   end
 end

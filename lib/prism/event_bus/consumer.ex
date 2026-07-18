@@ -20,7 +20,6 @@ defmodule Prism.EventBus.Consumer do
   use GenServer
 
   require Logger
-  require OpenTelemetry.Tracer
 
   alias Prism.EventBus.{Config, DLQ, Message, Retry, Telemetry, Transport}
 
@@ -186,24 +185,14 @@ defmodule Prism.EventBus.Consumer do
   # ── Private: Batch message processing ───────────────────────────────────
 
   defp process_batch_messages(messages, state) do
-    Enum.each(messages, fn %Message{id: id, data: payload} ->
-      case Jason.decode(payload) do
-        {:ok, cloud_event} when is_map(cloud_event) ->
-          type = cloud_event["type"]
+    Enum.each(messages, fn %Message{id: id} = message ->
+      case decode_cloud_event(message) do
+        {:ok, cloud_event} ->
+          process_message(id, cloud_event, state)
 
-          if type do
-            process_message(id, cloud_event, state)
-          else
-            Logger.warning(
-              "[EventBus.Consumer] Missing 'type' field in CloudEvent #{id}. ACKing and skipping."
-            )
-
-            ack_message(state, [id])
-          end
-
-        {:ok, _} ->
+        {:error, :invalid_data} ->
           Logger.warning(
-            "[EventBus.Consumer] Invalid CloudEvent payload for message #{id}. ACKing and sending to DLQ."
+            "[EventBus.Consumer] Invalid CloudEvent data for message #{id}. ACKing and sending to DLQ."
           )
 
           DLQ.publish(
@@ -215,7 +204,14 @@ defmodule Prism.EventBus.Consumer do
 
           ack_message(state, [id])
 
-        {:error, reason} ->
+        {:error, {:missing_header, header}} ->
+          Logger.warning(
+            "[EventBus.Consumer] Missing '#{header}' CloudEvents header for message #{id}. ACKing and skipping."
+          )
+
+          ack_message(state, [id])
+
+        {:error, {:json_decode, reason}} ->
           Logger.error(
             "[EventBus.Consumer] Failed to parse payload for message #{id}: #{inspect(reason)}"
           )
@@ -230,6 +226,39 @@ defmodule Prism.EventBus.Consumer do
           ack_message(state, [id])
       end
     end)
+  end
+
+  # CloudEvents attributes belong in broker headers; the payload contains only
+  # event data. Reconstruct the application-facing event at this boundary so
+  # handlers remain independent of Redis/Kafka wire framing.
+  defp decode_cloud_event(%Message{data: payload, headers: headers}) do
+    with {:ok, data} when is_map(data) <- Jason.decode(payload),
+         normalized <- normalize_cloud_event_headers(headers),
+         :ok <- require_header(normalized, "specversion"),
+         :ok <- require_header(normalized, "type"),
+         :ok <- require_header(normalized, "source"),
+         :ok <- require_header(normalized, "id") do
+      {:ok, Map.put(normalized, "data", data)}
+    else
+      {:ok, _other} -> {:error, :invalid_data}
+      {:error, %Jason.DecodeError{} = reason} -> {:error, {:json_decode, reason}}
+      {:error, {:missing_header, _header}} = error -> error
+    end
+  end
+
+  defp normalize_cloud_event_headers(headers) do
+    Enum.reduce(headers, %{}, fn
+      {"ce_" <> key, value}, event -> Map.put(event, key, value)
+      _, event -> event
+    end)
+  end
+
+  defp require_header(headers, key) do
+    if is_binary(headers[key]) and headers[key] != "" do
+      :ok
+    else
+      {:error, {:missing_header, key}}
+    end
   end
 
   defp process_message(id, cloud_event, state) do

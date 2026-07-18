@@ -23,7 +23,36 @@ permissions:
   packages: write
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Install Erlang and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          elixir-version: "1.19"
+      - name: Install dependencies
+        run: mix deps.get --check-locked
+      - name: Verify
+        run: |
+          mix format --check-formatted
+          MIX_ENV=test mix compile --warnings-as-errors
+          MIX_ENV=test mix test
+
   build-and-push:
+    needs: verify
     runs-on: arc-runner-set
     steps:
       - name: Checkout Code

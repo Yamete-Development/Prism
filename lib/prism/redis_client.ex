@@ -4,7 +4,6 @@ defmodule Prism.RedisClient do
   instead of `noreply_command` to maintain compatibility with Dragonfly,
   which does not support `CLIENT REPLY OFF`.
   """
-  require Logger
 
   @behaviour OffBroadwayRedisStream.RedisClient
 

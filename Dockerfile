@@ -36,6 +36,8 @@ RUN mix release
 # ==========================================
 FROM alpine:3.24
 
+RUN addgroup -S prism && adduser -S -G prism -h /home/prism prism
+
 RUN apk add --no-cache \
     bash \
     openssl \
@@ -47,6 +49,13 @@ WORKDIR /app
 
 ENV MIX_ENV=prod
 
-COPY --from=builder /app/_build/prod/rel/prism ./
+COPY --from=builder --chown=prism:prism /app/_build/prod/rel/prism ./
+
+USER prism
+
+EXPOSE 9090
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=6 \
+    CMD wget -q -T 2 -O /dev/null http://127.0.0.1:9090/ready || exit 1
 
 CMD ["bin/prism", "start"]

@@ -13,6 +13,7 @@ defmodule Prism.PrismStreamPayload do
           payload: String.t(),
           action: String.t(),
           batch_id: String.t(),
+          action_id: String.t() | nil,
           metadata: Prism.PrismStreamMetadata.t() | nil,
           hub_name: String.t() | nil,
           hub_id: String.t() | nil,
@@ -20,7 +21,8 @@ defmodule Prism.PrismStreamPayload do
           message_id: String.t() | nil,
           __uf__: [{non_neg_integer(), Protox.Types.tag(), binary()}]
         }
-  defstruct metadata: nil,
+  defstruct action_id: nil,
+            metadata: nil,
             targets: [],
             payload: "",
             hub_name: nil,
@@ -43,6 +45,7 @@ defmodule Prism.PrismStreamPayload do
       @spec encode!(t()) :: {iodata(), non_neg_integer()} | no_return()
       def encode!(msg) do
         {_acc = [], _acc_size = 0}
+        |> encode_action_id(msg)
         |> encode_metadata(msg)
         |> encode_hub_name(msg)
         |> encode_hub_id(msg)
@@ -55,6 +58,20 @@ defmodule Prism.PrismStreamPayload do
         |> encode_unknown_fields(msg)
       end
     )
+
+    defp encode_action_id({acc, acc_size}, msg) do
+      case msg.action_id do
+        nil ->
+          {acc, acc_size}
+
+        child_field_value ->
+          {value_bytes, value_bytes_size} = Protox.Encode.encode_string(child_field_value)
+          {["R", value_bytes | acc], acc_size + 1 + value_bytes_size}
+      end
+    rescue
+      ArgumentError ->
+        reraise Protox.EncodingError.new(:action_id, "invalid field value"), __STACKTRACE__
+    end
 
     defp encode_metadata({acc, acc_size}, msg) do
       case msg.metadata do
@@ -256,6 +273,11 @@ defmodule Prism.PrismStreamPayload do
             <<0::5, _::3, _rest::binary>> ->
               raise %Protox.IllegalTagError{}
 
+            <<10::5, 2::3, bytes::binary>> ->
+              {len, bytes} = Protox.Varint.decode(bytes)
+              {delimited, rest} = Protox.Decode.parse_delimited(bytes, len)
+              {[action_id: Protox.Decode.validate_string!(delimited)], rest}
+
             <<9::5, 2::3, bytes::binary>> ->
               {len, bytes} = Protox.Varint.decode(bytes)
               {delimited, rest} = Protox.Decode.parse_delimited(bytes, len)
@@ -333,6 +355,10 @@ defmodule Prism.PrismStreamPayload do
     @spec default(atom()) ::
             {:ok, boolean() | integer() | String.t() | float()}
             | {:error, :no_such_field | :no_default_value}
+    def default(:action_id) do
+      {:error, :no_default_value}
+    end
+
     def default(:metadata) do
       {:error, :no_default_value}
     end
@@ -386,6 +412,15 @@ defmodule Prism.PrismStreamPayload do
           label: :optional,
           name: :action,
           tag: 2,
+          type: :string
+        },
+        action_id: %{
+          __struct__: Protox.Field,
+          extender: nil,
+          kind: %{__struct__: Protox.OneOf, parent: :_action_id},
+          label: :proto3_optional,
+          name: :action_id,
+          tag: 10,
           type: :string
         },
         batch_id: %{

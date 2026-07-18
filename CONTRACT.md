@@ -1,10 +1,16 @@
-# Redis Stream Contract
+# Prism / Polarizer Kafka Contract
 
-Prism acts as a consumer of Redis Streams to process webhook dispatch requests, and a producer of Redis Streams to emit callbacks once processing is complete (or fails). All stream keys are configurable via environment variables — see `.env.example` for the full list.
+Polarizer is the only production producer for `prism.stream.jobs`. Values are raw binary Protobuf and CloudEvents metadata is stored in Kafka headers. Kafka topic ACLs must grant job-topic write access only to Polarizer's authenticated principal and read access only to Prism. Prism additionally rejects records whose declared source or type does not match its configured Polarizer identity.
 
 ## Enqueueing Work (Input Stream)
 
-To dispatch messages, push Protobuf payloads (`PrismStreamPayload`) to your configured EventBus stream (default topic/key: `prism.stream.jobs`).
+Polarizer publishes `PrismStreamPayload` directly to `prism.stream.jobs`. Confluent framing, JSON envelopes, and externally written Redis stream entries are not accepted production contracts.
+
+Required Kafka headers are `ce_specversion=1.0`, `ce_type=fun.interchat.prism.job`, `ce_source=/polarizer`, `ce_id`, `ce_time`, `ce_datacontenttype=application/protobuf`, and `content-type=application/protobuf`. The Kafka key must be non-empty. `PRISM_JOB_SOURCE` and `PRISM_JOB_EVENT_TYPE` may tighten the expected identity/type but must agree with Polarizer.
+
+Production delivery is synchronous with the Kafka acknowledgement boundary: Prism does not return the Broadway message until Discord processing and the authoritative callback have completed. Broadway Kafka commits failed records, so `handle_failed/2` first publishes retriable raw jobs to `PRISM_JOBS_RETRY_TOPIC` and waits for the broker acknowledgement. Invalid contracts are synchronously published to the restricted `PRISM_JOBS_DLQ_TOPIC`. Broadway catches failures raised by `handle_failed/2`, so mandatory Kafka handoffs retry with bounded exponential backoff until the broker acknowledges them; the callback cannot return and the consumed offset cannot advance while no durable Kafka copy exists.
+
+Retry values are the exact original Protobuf bytes with the original CloudEvents headers and partition key. Additional headers record `prism-original-topic`, monotonically increasing `prism-retry-attempt`, `prism-not-before-ms`, and a typed `prism-retry-reason`. Prism consumes both the primary and retry topics. A retry record remains retained and unacknowledged while its not-before deadline is pending; Redis may still accelerate per-target scheduling but is never the authoritative copy of a whole approved job.
 
 ### Payload Schema (Protobuf + JSON)
 
@@ -32,15 +38,32 @@ message PrismTarget {
 message PrismStreamPayload {
   string batch_id = 1;
   string action = 2;
-  string payload = 3; // JSON string of Discord payload
-  repeated PrismTarget targets = 4;
-  optional string message_id = 5;
-  optional int32 shard_index = 6;
-  optional string hub_id = 7;
-  optional string hub_name = 8;
+  optional string message_id = 3;
+  optional int32 shard_index = 4;
+  optional string hub_id = 5;
+  optional string hub_name = 6;
+  string payload = 7; // JSON string of Discord payload
+  repeated PrismTarget targets = 8;
   optional PrismStreamMetadata metadata = 9;
+  optional string action_id = 10;
 }
 ```
+
+Prism requires a UUIDv7 `action_id`, non-empty `batch_id` and `message_id`, and at least one target. These identities survive internal delay/retry processing. Authoritative delivery receipts are keyed by `action_id`; observational batch callbacks retain `batch_id` and parent message identity.
+
+```protobuf
+message PrismDeliveryCallback {
+  string action_id = 1;
+  string message_id = 2;
+  MessageState state = 3; // ACTIVE or DELIVERY_FAILED
+  string failure_code = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+}
+```
+
+Prism publishes this raw message to `events.prism.delivery.v2`, keyed by `action_id`, only after Discord delivery succeeds or the batch has no successful target. Polarizer consumes it to transition `APPROVED_PENDING_DELIVERY` to `ACTIVE` or `DELIVERY_FAILED`. A later successful retry may transition `DELIVERY_FAILED` to `ACTIVE`. Observational summaries retain `action_id`, `batch_id`, and `parent_message_id` for bot correlation but are not authoritative.
+
+Per-target Redis checkpoints are keyed by Polarizer action ID, batch ID, and webhook target ID. A replay after callback publication therefore reuses completed target results and republishes the idempotent state callback instead of intentionally issuing the Discord request again. There remains an unavoidable external-side-effect ambiguity if the process dies after Discord accepts a webhook but before the checkpoint write; staging fault-injection tests must exercise this window before promotion.
 
 Example of the inner JSON `payload` string:
 ```json
@@ -188,7 +211,7 @@ All stream keys and Redis identifiers are configurable. See `.env.example` for t
 
 ## Event Bus Output (CloudEvents v1.0)
 
-Prism publishes events to the shared Redis Streams event bus for inter-service communication. The primary stream is `events.bus` with a dead-letter queue at `events.bus.dlq`. All stream keys are configurable — see `.env.example`.
+Prism publishes observational JSON CloudEvents to the shared Kafka event topic. The primary topic is `events.bus` with a restricted dead-letter topic at `events.bus.dlq`. These summaries do not drive authoritative message state; `PrismDeliveryCallback` on `events.prism.delivery.v2` does.
 
 ### CloudEvent Envelope Schema
 
@@ -272,4 +295,4 @@ The EventBus adapter supports pluggable transport backends behind a unified cont
 | Go | `interface` (`Publisher`) | `RedisPublisher` |
 | Rust | `trait` (`EventBus`) | `RedisEventBus` |
 
-Each transport backend must implement: publish, create consumer group, read batch, acknowledge, claim stale, and system name. Set `EVENT_BUS_TRANSPORT` to swap backends (e.g., `redis` or `kafka`).
+Production sets `EVENT_BUS_TRANSPORT=kafka`; any other runtime value is rejected. The Redis transport remains available only to isolated tests, while Redis-backed delayed retries are internal Prism state rather than an external ingestion path.

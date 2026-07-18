@@ -39,7 +39,13 @@ defmodule Prism.FanoutBroadway.Preflight do
         %{
           target: target,
           webhook_id: webhook_id,
-          checkpoint_key: Helpers.checkpoint_key(action, batch_id, webhook_id),
+          checkpoint_key:
+            Helpers.checkpoint_key(
+              action,
+              batch_id,
+              webhook_id,
+              Map.get(target, "polarizer_action_id")
+            ),
           bucket_method: method_str
         }
       end)

@@ -33,12 +33,11 @@ defmodule Prism.MixProject do
       {:opentelemetry_api, "~> 1.3"},
       {:opentelemetry_exporter, "~> 1.6"},
       {:opentelemetry, "~> 1.4"},
-      {:bandit, "~> 1.5", only: :test},
-      {:plug, "~> 1.6", only: :test},
+      {:bandit, "~> 1.5"},
+      {:plug, "~> 1.6"},
       {:brod, "~> 4.5"},
       {:broadway_kafka, "~> 0.4.4"},
-      {:protox, "~> 2.0"},
-      {:ezstd, "~> 1.1"}
+      {:protox, "~> 2.0"}
     ]
   end
 

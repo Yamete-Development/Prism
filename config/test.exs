@@ -1,6 +1,7 @@
 import Config
 
 config :prism,
+  health_port: 0,
   discord_base_url: "http://localhost:4002",
   finch_pool_count: 10,
   finch_protocols: [:http1],
@@ -38,4 +39,7 @@ config :prism,
   event_bus_consumer_batch_size: 10,
   event_bus_consumer_block_ms: 3000,
   event_bus_stale_claim_idle_ms: 30_000,
-  event_bus_stale_claim_interval_ms: 60_000
+  event_bus_stale_claim_interval_ms: 60_000,
+  event_bus_transport_backend: Prism.EventBus.Transport.Redis,
+  prism_job_source: "/polarizer",
+  prism_job_event_type: "fun.interchat.prism.job"

@@ -30,4 +30,5 @@ message PrismStreamPayload {
   string payload = 7; // JSON encoded payload
   repeated PrismTarget targets = 8;
   optional PrismStreamMetadata metadata = 9;
+  optional string action_id = 10;
 }

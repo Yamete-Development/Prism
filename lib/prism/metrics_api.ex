@@ -1,6 +1,5 @@
 defmodule Prism.MetricsAPI do
   use GenServer
-  require Logger
 
   @name __MODULE__
 
