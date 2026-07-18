@@ -1,61 +1,64 @@
-# ==========================================
-# 1. Build Stage
-# ==========================================
-FROM elixir:1.20-otp-29-alpine AS builder
+# syntax=docker/dockerfile:1.7
 
-# Build dependencies
-RUN apk add --no-cache \
-    build-base \
-    git \
-    cmake \
-    bash
+FROM elixir:1.20-otp-29-slim AS builder
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends build-essential ca-certificates cmake git
 
 WORKDIR /app
-
 ENV MIX_ENV=prod
 
-# Install Mix tooling
-RUN mix local.hex --force && \
-    mix local.rebar --force
+RUN mix local.hex --force && mix local.rebar --force
 
-# Install dependencies
 COPY mix.exs mix.lock ./
-RUN mix deps.get --only $MIX_ENV
-RUN mix deps.compile
+RUN --mount=type=cache,id=prism-glibc-deps,target=/app/deps,sharing=locked \
+    --mount=type=cache,id=prism-glibc-build,target=/app/_build,sharing=locked \
+    mix deps.get --only prod && \
+    mix deps.compile
 
-# Copy source
-COPY config config/
-COPY lib lib/
+COPY config/ config/
+COPY lib/ lib/
+RUN --mount=type=cache,id=prism-glibc-deps,target=/app/deps,sharing=locked \
+    --mount=type=cache,id=prism-glibc-build,target=/app/_build,sharing=locked \
+    mix compile && \
+    mix release --path /app/release --overwrite && \
+    find /app/release -type f \( -name '*.so' -o -name 'beam.smp' \) \
+        -exec strip --strip-unneeded '{}' +
 
-# Build release
-RUN mix compile
-RUN mix release
+FROM debian:trixie-slim AS runtime-tools
 
-# ==========================================
-# 2. Runtime Stage
-# ==========================================
-FROM alpine:3.24
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends busybox-static libsctp1 libtinfo6 tini && \
+    install -D -m 0755 /bin/busybox /out/bin/busybox && \
+    install -D -m 0755 /usr/bin/tini /out/bin/tini && \
+    ln -s /usr/bin/busybox /out/sh && \
+    install -D -m 0644 /usr/lib/*-linux-gnu/libsctp.so.1 /out/lib/libsctp.so.1 && \
+    install -D -m 0644 /usr/lib/*-linux-gnu/libtinfo.so.6 /out/lib/libtinfo.so.6
 
-RUN addgroup -S prism && adduser -S -G prism -h /home/prism prism
-
-RUN apk add --no-cache \
-    bash \
-    openssl \
-    ncurses-libs \
-    libstdc++ \
-    ca-certificates
+FROM gcr.io/distroless/cc-debian13:nonroot AS runtime
 
 WORKDIR /app
+ENV HOME=/home/nonroot \
+    LANG=C.UTF-8 \
+    LD_LIBRARY_PATH=/usr/lib/prism \
+    ELIXIR_ERL_OPTIONS=+fnu
 
-ENV MIX_ENV=prod
+COPY --from=runtime-tools /out/bin/ /usr/bin/
+COPY --from=runtime-tools /out/sh /bin/sh
+COPY --from=runtime-tools /out/lib/ /usr/lib/prism/
+COPY --from=builder --chown=65532:65532 /app/release/ ./
 
-COPY --from=builder --chown=prism:prism /app/_build/prod/rel/prism ./
-
-USER prism
+USER 65532:65532
 
 EXPOSE 9090
+STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=6 \
-    CMD wget -q -T 2 -O /dev/null http://127.0.0.1:9090/ready || exit 1
+    CMD ["/usr/bin/busybox", "wget", "-q", "-T", "2", "-O", "/dev/null", "http://127.0.0.1:9090/ready"]
 
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["bin/prism", "start"]
