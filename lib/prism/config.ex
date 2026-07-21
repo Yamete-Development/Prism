@@ -282,7 +282,8 @@ defmodule Prism.Config do
   def cwnd_probe_interval_ms, do: Application.get_env(:prism, :cwnd_probe_interval_ms, 1_000)
 
   @doc "Minimum time between consecutive Cubic decreases (ms)"
-  def cwnd_decrease_cooldown_ms, do: Application.get_env(:prism, :cwnd_decrease_cooldown_ms, 5_000)
+  def cwnd_decrease_cooldown_ms,
+    do: Application.get_env(:prism, :cwnd_decrease_cooldown_ms, 5_000)
 
   # -- 4xx Safety Budget --
   @doc "Max 4xx responses before full throttle (Cloudflare 404 restriction ~200)"
@@ -298,5 +299,6 @@ defmodule Prism.Config do
   def cwnd_4xx_critical_pct, do: Application.get_env(:prism, :cwnd_4xx_critical_pct, 0.8)
 
   @doc "ETS prune interval for 4xx budget (ms)"
-  def cwnd_4xx_prune_interval_ms, do: Application.get_env(:prism, :cwnd_4xx_prune_interval_ms, 10_000)
+  def cwnd_4xx_prune_interval_ms,
+    do: Application.get_env(:prism, :cwnd_4xx_prune_interval_ms, 10_000)
 end

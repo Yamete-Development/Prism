@@ -35,6 +35,7 @@ defmodule Prism.CongestionWindow do
       :ok
     else
       atomics_ref = :persistent_term.get(@atomics_key, nil)
+
       if atomics_ref do
         new_val = :atomics.add_get(atomics_ref, @in_flight_idx, 1)
         cwnd = :persistent_term.get(@cwnd_key, Prism.Config.cwnd_min())
@@ -58,10 +59,12 @@ defmodule Prism.CongestionWindow do
   def release do
     if Prism.Config.congestion_control_enabled?() do
       atomics_ref = :persistent_term.get(@atomics_key, nil)
+
       if atomics_ref do
         :atomics.sub(atomics_ref, @in_flight_idx, 1)
       end
     end
+
     :ok
   end
 
@@ -149,7 +152,8 @@ defmodule Prism.CongestionWindow do
         k: 0.0,
         beta_last: Prism.Config.cwnd_beta_global(),
         w_est: float_cwnd_initial(),
-        alpha_cubic: 3.0 * (1.0 - Prism.Config.cwnd_beta_global()) / (1.0 + Prism.Config.cwnd_beta_global()),
+        alpha_cubic:
+          3.0 * (1.0 - Prism.Config.cwnd_beta_global()) / (1.0 + Prism.Config.cwnd_beta_global()),
         last_decrease_at: now - Prism.Config.cwnd_decrease_cooldown_ms(),
         estimated_rtt: 100.0,
         phase: :slow_start
@@ -179,7 +183,8 @@ defmodule Prism.CongestionWindow do
 
     :persistent_term.put(:prism_cwnd_estimated_rtt, new_rtt)
 
-    {:noreply, %{state | cubic: new_cubic, successes_since_probe: state.successes_since_probe + 1}}
+    {:noreply,
+     %{state | cubic: new_cubic, successes_since_probe: state.successes_since_probe + 1}}
   end
 
   @impl true
@@ -202,7 +207,7 @@ defmodule Prism.CongestionWindow do
 
       new_cwnd = max(current_cwnd * beta, Prism.Config.cwnd_min() * 1.0)
       new_cwnd_epoch = new_cwnd
-      
+
       c = Prism.Config.cubic_c()
       # RFC 9438 §4.2: K = cbrt((W_max - cwnd_epoch) / C)
       new_k =
@@ -215,31 +220,34 @@ defmodule Prism.CongestionWindow do
       # RFC 9438 §4.3: alpha_cubic = 3 * (1 - beta) / (1 + beta)
       alpha_cubic = 3.0 * (1.0 - beta) / (1.0 + beta)
 
-      new_cubic = %{cubic |
-        cwnd: new_cwnd,
-        w_max: new_w_max,
-        ssthresh: new_cwnd,
-        cwnd_epoch: new_cwnd_epoch,
-        epoch_start: now,
-        k: new_k,
-        beta_last: beta,
-        w_est: new_cwnd,
-        alpha_cubic: alpha_cubic,
-        last_decrease_at: now,
-        phase: :concave
+      new_cubic = %{
+        cubic
+        | cwnd: new_cwnd,
+          w_max: new_w_max,
+          ssthresh: new_cwnd,
+          cwnd_epoch: new_cwnd_epoch,
+          epoch_start: now,
+          k: new_k,
+          beta_last: beta,
+          w_est: new_cwnd,
+          alpha_cubic: alpha_cubic,
+          last_decrease_at: now,
+          phase: :concave
       }
 
       # Immediately recompute and apply
       safety_cwnd = compute_safety_cwnd(count_4xx_in_window())
       effective = max(trunc(min(new_cwnd, safety_cwnd)), Prism.Config.cwnd_min())
-      
+
       :persistent_term.put(@cwnd_key, effective)
       :persistent_term.put(:prism_cwnd_cubic, new_cwnd)
       :persistent_term.put(:prism_cwnd_safety, safety_cwnd)
       :persistent_term.put(:prism_cwnd_phase, :concave)
       :persistent_term.put(:prism_cwnd_w_max, new_w_max)
 
-      Logger.info("[CongestionWindow] Decrease (beta=#{beta}). New cwnd=#{trunc(new_cwnd)}, W_max=#{trunc(new_w_max)}")
+      Logger.info(
+        "[CongestionWindow] Decrease (beta=#{beta}). New cwnd=#{trunc(new_cwnd)}, W_max=#{trunc(new_w_max)}"
+      )
 
       {:noreply, %{state | cubic: new_cubic, successes_since_probe: 0}}
     end
@@ -255,7 +263,10 @@ defmodule Prism.CongestionWindow do
     max_config = Prism.Config.cwnd_max() * 1.0
 
     # 1. Update W_est based on successes
-    w_est_updated = state.cubic.w_est + state.cubic.alpha_cubic * (state.successes_since_probe / max(state.cubic.w_est, 1.0))
+    w_est_updated =
+      state.cubic.w_est +
+        state.cubic.alpha_cubic * (state.successes_since_probe / max(state.cubic.w_est, 1.0))
+
     cubic = %{state.cubic | w_est: w_est_updated}
 
     # 2. Compute Cubic target
@@ -269,15 +280,16 @@ defmodule Prism.CongestionWindow do
         _ ->
           elapsed_s = (now - cubic.epoch_start) / 1_000.0
           cubic_target = c_config * :math.pow(elapsed_s - cubic.k, 3) + cubic.w_max
-          
+
           target = max(cubic_target, w_est_updated)
           target = max(min_config, min(target, max_config))
 
-          new_phase = cond do
-            w_est_updated > cubic_target -> :tcp_friendly
-            elapsed_s < cubic.k -> :concave
-            true -> :convex
-          end
+          new_phase =
+            cond do
+              w_est_updated > cubic_target -> :tcp_friendly
+              elapsed_s < cubic.k -> :concave
+              true -> :convex
+            end
 
           {target, %{cubic | cwnd: target, phase: new_phase}}
       end

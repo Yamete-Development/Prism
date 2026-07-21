@@ -86,7 +86,10 @@ defmodule Prism.DiscordWorker.HTTP do
     with :ok <- maybe_acquire_cwnd() do
       try do
         req_start = System.monotonic_time(:millisecond)
-        result = do_http_request_core(method, method_str, url, headers, body, webhook_id, message_id)
+
+        result =
+          do_http_request_core(method, method_str, url, headers, body, webhook_id, message_id)
+
         rtt_ms = System.monotonic_time(:millisecond) - req_start
 
         if Prism.Config.congestion_control_enabled?() do

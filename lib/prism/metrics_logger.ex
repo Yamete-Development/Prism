@@ -40,7 +40,12 @@ defmodule Prism.MetricsLogger do
     bad_req_dlq_len = stream_length(Prism.Config.stream_bad_requests_dlq())
 
     :telemetry.execute([:prism, :event_bus, :dlq_depth], %{length: dlq_len}, %{})
-    :telemetry.execute([:prism, :discord_worker, :bad_requests_dlq_depth], %{length: bad_req_dlq_len}, %{})
+
+    :telemetry.execute(
+      [:prism, :discord_worker, :bad_requests_dlq_depth],
+      %{length: bad_req_dlq_len},
+      %{}
+    )
 
     current_batches = Prism.AsyncBatchCounter.get_processed_batches()
     current_targets = Prism.AsyncBatchCounter.get_processed_targets()

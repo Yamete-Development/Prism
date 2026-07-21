@@ -109,9 +109,21 @@ defmodule Prism.DiscordWorker do
               case HTTP.build_request(action, base_url, message_id, thread_id) do
                 {:ok, method, url} ->
                   Retry.spawn_retry(
-                    action, target, method, url, headers, body,
-                    webhook_id, message_id, batch_id, delay_ms, 1, parent_msg_id, :rate_limited
+                    action,
+                    target,
+                    method,
+                    url,
+                    headers,
+                    body,
+                    webhook_id,
+                    message_id,
+                    batch_id,
+                    delay_ms,
+                    1,
+                    parent_msg_id,
+                    :rate_limited
                   )
+
                   {:error, {:rate_limited, delay_ms}}
 
                 {:error, reason} ->
@@ -206,18 +218,44 @@ defmodule Prism.DiscordWorker do
                     case result do
                       {:error, {:rate_limited, delay_ms}} ->
                         OpenTelemetry.Tracer.set_attribute(:error_type, "rate_limited")
+
                         Retry.spawn_retry(
-                          action, target, method, url, headers, body,
-                          webhook_id, message_id, batch_id, delay_ms, 1, parent_msg_id, :rate_limited
+                          action,
+                          target,
+                          method,
+                          url,
+                          headers,
+                          body,
+                          webhook_id,
+                          message_id,
+                          batch_id,
+                          delay_ms,
+                          1,
+                          parent_msg_id,
+                          :rate_limited
                         )
+
                         {:error, {:rate_limited, delay_ms}}
 
                       {:error, {:congestion_backoff, delay_ms}} ->
                         OpenTelemetry.Tracer.set_attribute(:error_type, "congestion_backoff")
+
                         Retry.spawn_retry(
-                          action, target, method, url, headers, body,
-                          webhook_id, message_id, batch_id, delay_ms, 1, parent_msg_id, :congestion_backoff
+                          action,
+                          target,
+                          method,
+                          url,
+                          headers,
+                          body,
+                          webhook_id,
+                          message_id,
+                          batch_id,
+                          delay_ms,
+                          1,
+                          parent_msg_id,
+                          :congestion_backoff
                         )
+
                         {:error, {:congestion_backoff, delay_ms}}
 
                       {:error, {:server_error, _}} ->
@@ -436,14 +474,36 @@ defmodule Prism.DiscordWorker do
             case result do
               {:error, {:rate_limited, delay_ms}} ->
                 Retry.spawn_retry(
-                  action, target, method, url, headers, body,
-                  webhook_id, message_id, batch_id, delay_ms, attempt + 1, parent_msg_id, :rate_limited
+                  action,
+                  target,
+                  method,
+                  url,
+                  headers,
+                  body,
+                  webhook_id,
+                  message_id,
+                  batch_id,
+                  delay_ms,
+                  attempt + 1,
+                  parent_msg_id,
+                  :rate_limited
                 )
 
               {:error, {:congestion_backoff, delay_ms}} ->
                 Retry.spawn_retry(
-                  action, target, method, url, headers, body,
-                  webhook_id, message_id, batch_id, delay_ms, attempt + 1, parent_msg_id, :congestion_backoff
+                  action,
+                  target,
+                  method,
+                  url,
+                  headers,
+                  body,
+                  webhook_id,
+                  message_id,
+                  batch_id,
+                  delay_ms,
+                  attempt + 1,
+                  parent_msg_id,
+                  :congestion_backoff
                 )
 
               {:error, {:server_error, _}} ->
