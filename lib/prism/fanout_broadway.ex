@@ -120,6 +120,9 @@ defmodule Prism.FanoutBroadway do
         ] ->
           {:error, :unexpected_topic}
 
+        blank?(Map.get(metadata, :key)) ->
+          {:error, :missing_partition_key}
+
         blank?(Map.get(headers, "ce_id")) or blank?(Map.get(headers, "ce_time")) or
             Enum.any?(expected, fn {key, value} -> Map.get(headers, key) != value end) ->
           {:error, :invalid_cloud_event_headers}
