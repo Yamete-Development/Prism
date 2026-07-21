@@ -6,7 +6,7 @@ Polarizer is the only production producer for `prism.stream.jobs`. Values are ra
 
 Polarizer publishes `PrismStreamPayload` directly to `prism.stream.jobs`. Confluent framing, JSON envelopes, and externally written Redis stream entries are not accepted production contracts.
 
-Required Kafka headers are `ce_specversion=1.0`, `ce_type=fun.interchat.prism.job`, `ce_source=/polarizer`, `ce_id`, `ce_time`, `ce_datacontenttype=application/protobuf`, and `content-type=application/protobuf`. The Kafka key must be non-empty. `PRISM_JOB_SOURCE` and `PRISM_JOB_EVENT_TYPE` may tighten the expected identity/type but must agree with Polarizer.
+Required Kafka headers are `ce_specversion=1.0`, `ce_type=fun.interchat.prism.job`, `ce_source=/polarizer`, `ce_id`, `ce_time`, `ce_datacontenttype=application/protobuf`, and `content-type=application/protobuf`. `PRISM_JOB_SOURCE` and `PRISM_JOB_EVENT_TYPE` may tighten the expected identity/type but must agree with Polarizer.
 
 Production delivery is synchronous with the Kafka acknowledgement boundary: Prism does not return the Broadway message until Discord processing and the authoritative callback have completed. Broadway Kafka commits failed records, so `handle_failed/2` first publishes retriable raw jobs to `PRISM_JOBS_RETRY_TOPIC` and waits for the broker acknowledgement. Invalid contracts are synchronously published to the restricted `PRISM_JOBS_DLQ_TOPIC`. Broadway catches failures raised by `handle_failed/2`, so mandatory Kafka handoffs retry with bounded exponential backoff until the broker acknowledges them; the callback cannot return and the consumed offset cannot advance while no durable Kafka copy exists.
 
