@@ -37,7 +37,8 @@ defmodule Prism.MixProject do
       {:plug, "~> 1.6"},
       {:brod, "~> 4.5"},
       {:broadway_kafka, "~> 0.4.4"},
-      {:protox, "~> 2.0"}
+      {:protox, "~> 2.0"},
+      {:ezstd, "~> 1.1"}
     ]
   end
 
