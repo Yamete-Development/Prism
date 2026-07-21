@@ -37,8 +37,10 @@ defmodule Prism.MetricsLogger do
       end
 
     dlq_len = stream_length(Prism.EventBus.Config.events_dlq_stream())
+    bad_req_dlq_len = stream_length(Prism.Config.stream_bad_requests_dlq())
 
     :telemetry.execute([:prism, :event_bus, :dlq_depth], %{length: dlq_len}, %{})
+    :telemetry.execute([:prism, :discord_worker, :bad_requests_dlq_depth], %{length: bad_req_dlq_len}, %{})
 
     current_batches = Prism.AsyncBatchCounter.get_processed_batches()
     current_targets = Prism.AsyncBatchCounter.get_processed_targets()
@@ -51,8 +53,29 @@ defmodule Prism.MetricsLogger do
     avg_targets_per_sec = Float.round(delta_targets / delta_time_s, 1)
     avg_batches_per_sec = Float.round(delta_batches / delta_time_s, 1)
 
+    cwnd_info =
+      if Prism.Config.congestion_control_enabled?() do
+        cwnd = Prism.CongestionWindow.window_size()
+        cubic = Prism.CongestionWindow.cubic_window()
+        safety = Prism.CongestionWindow.safety_window()
+        inflight = Prism.CongestionWindow.in_flight()
+        phase = Prism.CongestionWindow.phase()
+        w_max = Prism.CongestionWindow.w_max()
+        count_4xx = Prism.CongestionWindow.budget_count()
+        budget = Prism.Config.cwnd_4xx_budget()
+        util = Float.round(Prism.CongestionWindow.budget_utilization() * 100, 1)
+        rtt = Float.round(Prism.CongestionWindow.estimated_rtt(), 1)
+        binding = if safety < cubic, do: "safety", else: "cubic"
+
+        " | CWND: #{cwnd} [#{binding}] (Cubic: #{trunc(cubic)} Safety: #{trunc(safety)} " <>
+          "W_max: #{trunc(w_max)} Phase: #{phase}) " <>
+          "In-flight: #{inflight} | 4xx: #{count_4xx}/#{budget} (#{util}%) | RTT: #{rtt}ms"
+      else
+        ""
+      end
+
     Logger.info(
-      "[Metrics] Active Batches: #{batch_count} | Erlang Procs: #{process_count} | Run Queue: #{run_queue} | Ports/Sockets: #{port_count} | Jobs Stream: #{jobs_len_str} | DLQ: #{dlq_len} | Throughput: #{avg_targets_per_sec} msg/s (#{avg_batches_per_sec} batch/s)"
+      "[Metrics] Active Batches: #{batch_count} | Erlang Procs: #{process_count} | Run Queue: #{run_queue} | Ports/Sockets: #{port_count} | Jobs Stream: #{jobs_len_str} | DLQ: #{dlq_len} | BadReq DLQ: #{bad_req_dlq_len} | Throughput: #{avg_targets_per_sec} msg/s (#{avg_batches_per_sec} batch/s)#{cwnd_info}"
     )
 
     new_state = %{

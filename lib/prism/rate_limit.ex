@@ -61,10 +61,20 @@ defmodule Prism.RateLimit do
     if parsed.is_cloudflare do
       Backpressure.record_cloudflare_block(parsed.retry_after_ms)
       InvalidRequestTracker.record_invalid()
+
+      if Prism.Config.congestion_control_enabled?() do
+        Prism.CongestionWindow.record_cloudflare_429()
+        Prism.CongestionWindow.record_4xx()
+      end
     else
       if parsed.is_global do
         Bucket.update_global(parsed.limit, 0, parsed.reset_at_ms)
         InvalidRequestTracker.record_invalid()
+
+        if Prism.Config.congestion_control_enabled?() do
+          Prism.CongestionWindow.record_global_429()
+          Prism.CongestionWindow.record_4xx()
+        end
       else
         # Only update the per-webhook bucket for non-shared scopes.
         # Shared 429s mean the shared channel-level limit was hit by OTHER
@@ -78,6 +88,8 @@ defmodule Prism.RateLimit do
         else
           Bucket.update(webhook_id, method_str, parsed.limit, 0, parsed.reset_at_ms)
           InvalidRequestTracker.record_invalid()
+          if Prism.Config.congestion_control_enabled?(),
+            do: Prism.CongestionWindow.record_4xx()
         end
       end
     end

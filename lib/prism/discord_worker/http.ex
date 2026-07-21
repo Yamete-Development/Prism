@@ -65,6 +65,9 @@ defmodule Prism.DiscordWorker.HTTP do
         {:error, {:rate_limited, _}} ->
           OpenTelemetry.Tracer.set_attribute(:error_type, "rate_limited")
 
+        {:error, {:congestion_backoff, _}} ->
+          OpenTelemetry.Tracer.set_attribute(:error_type, "congestion_backoff")
+
         {:error, {:server_error, _}} ->
           OpenTelemetry.Tracer.set_attribute(:error_type, "server_error")
 
@@ -80,6 +83,39 @@ defmodule Prism.DiscordWorker.HTTP do
   end
 
   defp do_http_request_internal(method, method_str, url, headers, body, webhook_id, message_id) do
+    with :ok <- maybe_acquire_cwnd() do
+      try do
+        req_start = System.monotonic_time(:millisecond)
+        result = do_http_request_core(method, method_str, url, headers, body, webhook_id, message_id)
+        rtt_ms = System.monotonic_time(:millisecond) - req_start
+
+        if Prism.Config.congestion_control_enabled?() do
+          case result do
+            {:ok, _} -> Prism.CongestionWindow.record_success(rtt_ms)
+            _ -> :ok
+          end
+        end
+
+        result
+      after
+        if Prism.Config.congestion_control_enabled?(),
+          do: Prism.CongestionWindow.release()
+      end
+    end
+  end
+
+  defp maybe_acquire_cwnd do
+    if Prism.Config.congestion_control_enabled?() do
+      case Prism.CongestionWindow.acquire() do
+        :ok -> :ok
+        {:backoff, delay_ms} -> {:error, {:congestion_backoff, delay_ms}}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp do_http_request_core(method, method_str, url, headers, body, webhook_id, message_id) do
     if method != :delete and Helpers.empty_discord_payload?(body) do
       Logger.warning(
         "Skipping webhook_id=#{webhook_id} method=#{method_str} — empty payload (no content, embeds, or components)"
@@ -149,6 +185,9 @@ defmodule Prism.DiscordWorker.HTTP do
 
         {:ok, %{status: status, body: resp_body, headers: resp_headers}}
         when status in [401, 403] ->
+          if Prism.Config.congestion_control_enabled?(),
+            do: Prism.CongestionWindow.record_4xx()
+
           is_cf = Prism.RateLimit.Headers.cloudflare_response?(resp_headers, resp_body)
 
           Logger.warning(
@@ -159,13 +198,16 @@ defmodule Prism.DiscordWorker.HTTP do
           {:error, :permanent}
 
         {:ok, %{status: 400, body: resp_body}} ->
+          if Prism.Config.congestion_control_enabled?(),
+            do: Prism.CongestionWindow.record_4xx()
+
           Logger.error(
             "Bad request webhook_id=#{webhook_id} body=#{resp_body} – sending to DLQ and dropping permanently."
           )
 
           Prism.Helpers.redix_command([
             "XADD",
-            "prism.dlq.bad_requests",
+            Prism.Config.stream_bad_requests_dlq(),
             "MAXLEN",
             "~",
             "10000",
@@ -187,6 +229,9 @@ defmodule Prism.DiscordWorker.HTTP do
         {:ok, %{status: 404, body: resp_body}} ->
           case Jason.decode(resp_body) do
             {:ok, %{"code" => 10008}} ->
+              if Prism.Config.congestion_control_enabled?(),
+                do: Prism.CongestionWindow.record_4xx()
+
               if method == :delete do
                 Logger.debug(
                   "Webhook_id=#{webhook_id} returned 10008 on delete. Message already deleted, treating as success."
@@ -210,6 +255,9 @@ defmodule Prism.DiscordWorker.HTTP do
               end
 
             {:ok, %{"code" => code}} when code in [10003, 10015] ->
+              if Prism.Config.congestion_control_enabled?(),
+                do: Prism.CongestionWindow.record_4xx()
+
               Logger.warning(
                 "Dropping webhook_id=#{webhook_id} status=404 body=#{resp_body} (invalid webhook)"
               )
@@ -218,6 +266,9 @@ defmodule Prism.DiscordWorker.HTTP do
               {:error, :invalid_webhook}
 
             _ ->
+              if Prism.Config.congestion_control_enabled?(),
+                do: Prism.CongestionWindow.record_4xx()
+
               Logger.warning(
                 "Treating 404 as transient webhook_id=#{webhook_id} body=#{resp_body}"
               )

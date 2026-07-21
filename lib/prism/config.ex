@@ -32,6 +32,10 @@ defmodule Prism.Config do
   def stream_retries,
     do: Application.get_env(:prism, :redis_retry_stream, "prism.stream.retries")
 
+  @doc "Bad requests DLQ stream key"
+  def stream_bad_requests_dlq,
+    do: Application.get_env(:prism, :stream_bad_requests_dlq, "prism.dlq.bad_requests")
+
   @doc "Consumer group name"
   def consumer_group, do: Application.get_env(:prism, :consumer_group, "prism:cg:fanout")
 
@@ -245,4 +249,54 @@ defmodule Prism.Config do
 
   @doc "Cancel TTL seconds"
   def cancel_ttl, do: Application.get_env(:prism, :cancel_ttl, 300)
+
+  # ── Congestion control ─────────────────────────────────────────────────
+
+  @doc "Enable/disable Cubic congestion control with 4xx safety budget"
+  def congestion_control_enabled?,
+    do: Application.get_env(:prism, :congestion_control_enabled, false)
+
+  # -- Cubic parameters --
+  @doc "Initial congestion window size"
+  def cwnd_initial, do: Application.get_env(:prism, :cwnd_initial, 100)
+
+  @doc "Minimum congestion window (floor)"
+  def cwnd_min, do: Application.get_env(:prism, :cwnd_min, 10)
+
+  @doc "Maximum congestion window (ceiling)"
+  def cwnd_max, do: Application.get_env(:prism, :cwnd_max, 2000)
+
+  @doc "Initial slow-start threshold"
+  def ssthresh_initial, do: Application.get_env(:prism, :ssthresh_initial, 500)
+
+  @doc "Cubic scaling constant C (RFC 9438 default: 0.4)"
+  def cubic_c, do: Application.get_env(:prism, :cubic_c, 0.4)
+
+  @doc "Multiplicative decrease factor for global 429s"
+  def cwnd_beta_global, do: Application.get_env(:prism, :cwnd_beta_global, 0.7)
+
+  @doc "Multiplicative decrease factor for Cloudflare 429s"
+  def cwnd_beta_cloudflare, do: Application.get_env(:prism, :cwnd_beta_cloudflare, 0.3)
+
+  @doc "Probe interval (ms)"
+  def cwnd_probe_interval_ms, do: Application.get_env(:prism, :cwnd_probe_interval_ms, 1_000)
+
+  @doc "Minimum time between consecutive Cubic decreases (ms)"
+  def cwnd_decrease_cooldown_ms, do: Application.get_env(:prism, :cwnd_decrease_cooldown_ms, 5_000)
+
+  # -- 4xx Safety Budget --
+  @doc "Max 4xx responses before full throttle (Cloudflare 404 restriction ~200)"
+  def cwnd_4xx_budget, do: Application.get_env(:prism, :cwnd_4xx_budget, 200)
+
+  @doc "4xx sliding window duration (ms)"
+  def cwnd_4xx_window_ms, do: Application.get_env(:prism, :cwnd_4xx_window_ms, 60_000)
+
+  @doc "Utilization below which no throttling occurs (0.0–1.0)"
+  def cwnd_4xx_safe_pct, do: Application.get_env(:prism, :cwnd_4xx_safe_pct, 0.3)
+
+  @doc "Utilization above which cwnd_min is enforced (0.0–1.0)"
+  def cwnd_4xx_critical_pct, do: Application.get_env(:prism, :cwnd_4xx_critical_pct, 0.8)
+
+  @doc "ETS prune interval for 4xx budget (ms)"
+  def cwnd_4xx_prune_interval_ms, do: Application.get_env(:prism, :cwnd_4xx_prune_interval_ms, 10_000)
 end

@@ -135,6 +135,22 @@ if config_env() != :test do
     prism_jobs_dlq_topic: env!("PRISM_JOBS_DLQ_TOPIC", :string, "prism.stream.jobs.dlq"),
     prism_jobs_retry_topic: env!("PRISM_JOBS_RETRY_TOPIC", :string, "prism.stream.jobs.retry"),
     prism_handoff_retry_base_ms: env!("PRISM_HANDOFF_RETRY_BASE_MS", :integer, 100),
+    # Congestion control (Cubic + 4xx safety budget)
+    congestion_control_enabled: env!("PRISM_CONGESTION_CONTROL_ENABLED", :boolean, false),
+    cwnd_initial: env!("PRISM_CWND_INITIAL", :integer, 100),
+    cwnd_min: env!("PRISM_CWND_MIN", :integer, 10),
+    cwnd_max: env!("PRISM_CWND_MAX", :integer, 2000),
+    ssthresh_initial: env!("PRISM_SSTHRESH_INITIAL", :integer, 500),
+    cubic_c: env!("PRISM_CUBIC_C", :float, 0.4),
+    cwnd_beta_global: env!("PRISM_CWND_BETA_GLOBAL", :float, 0.7),
+    cwnd_beta_cloudflare: env!("PRISM_CWND_BETA_CLOUDFLARE", :float, 0.3),
+    cwnd_probe_interval_ms: env!("PRISM_CWND_PROBE_INTERVAL_MS", :integer, 1000),
+    cwnd_decrease_cooldown_ms: env!("PRISM_CWND_DECREASE_COOLDOWN_MS", :integer, 5000),
+    cwnd_4xx_budget: env!("PRISM_CWND_4XX_BUDGET", :integer, 200),
+    cwnd_4xx_window_ms: env!("PRISM_CWND_4XX_WINDOW_MS", :integer, 60000),
+    cwnd_4xx_safe_pct: env!("PRISM_CWND_4XX_SAFE_PCT", :float, 0.3),
+    cwnd_4xx_critical_pct: env!("PRISM_CWND_4XX_CRITICAL_PCT", :float, 0.8),
+    cwnd_4xx_prune_interval_ms: env!("PRISM_CWND_4XX_PRUNE_INTERVAL_MS", :integer, 10000),
     schema_registry_url: env!("SCHEMA_REGISTRY_URL", :string, "http://localhost:8081"),
     kafka_brokers:
       env!("KAFKA_BROKERS", :string, "localhost:9092")

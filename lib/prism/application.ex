@@ -117,6 +117,7 @@ defmodule Prism.Application do
           },
           {Prism.RateLimit.Backpressure, []},
           {Prism.RateLimit.InvalidRequestTracker, []},
+          {Prism.CongestionWindow, []},
           {Prism.DelayedScheduler, []},
           {Prism.SchemaRegistry, []},
           {Prism.StreamTrimmer, []}
