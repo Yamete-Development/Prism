@@ -4,7 +4,7 @@ defmodule Prism.MixProject do
   def project do
     [
       app: :prism,
-      version: "1.3.1",
+      version: "1.3.2",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
